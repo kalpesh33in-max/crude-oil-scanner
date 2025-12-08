@@ -55,11 +55,12 @@ def send_alert(title, lots_label, side, strike_type, strike, price, oi_change, i
     msg += f"IV ROC: {iv_roc:+.1f}%\n"
     msg += "</pre>\n"
     msg += f"<b>Time:</b> {datetime.now().strftime('%H:%M:%S IST')}"
-    
+
     if bot and CHAT_ID:
         try:
+            import asyncio
             for cid in CHAT_ID.split(','):
-                bot.send_message(chat_id=cid.strip(), text=msg, parse_mode='HTML')
+                asyncio.run(bot.send_message(chat_id=cid.strip(), text=msg, parse_mode='HTML'))
         except Exception as e:
             print(f"Telegram send error: {e}")
 
