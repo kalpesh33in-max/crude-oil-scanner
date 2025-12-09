@@ -14,11 +14,8 @@ app = Flask(__name__)
 # Telegram setup
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-# IMPORTANT FIX: Change bot initialization to remove the 'await' requirement from the error handler
-if TOKEN:
-    bot = telegram.Bot(token=TOKEN)
-else:
-    bot = None
+# Initializing bot outside of async functions
+bot = telegram.Bot(token=TOKEN) if TOKEN else None
 
 # WTI Crude Oil Futures (real ticker - MCX not on yfinance)
 FUT_SYMBOL = "CL=F"
@@ -49,11 +46,13 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 1. New OI (OI Increase)
     if oi_rising:
         if iv_rising:
+            # OI ^ + IV ^ (Hedging / Forced Writing)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                  return "Hedging / Forced Writing (Rising IV suggests high risk for sellers.)"
             return "Strong Accumulation / High Volatility Buy" 
 
         else: # IV falling
+            # OI ^ + IV v (Fresh Writing / Position Building)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Fresh Writing / Position Building (Writers are actively selling new contracts, high conviction.)"
             return "Strong Accumulation / Low Volatility Buy"
@@ -61,11 +60,13 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 2. Position Exit (OI Decrease)
     else:
         if iv_rising:
+            # OI v + IV ^ (Unwinding / Position Exiting)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Unwinding / Position Exiting (Writers actively buying back due to higher risk/IV.)"
             return "Liquidation / Forced Exit by Buyers" 
             
         else: # IV falling
+            # OI v + IV v (Profit Booking / Minor Exit)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor.)"
             return "Profit Booking by Buyers / Low Volatility Exit"
@@ -127,8 +128,8 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
 def monitor():
     global prev_oi, sent_alerts
     
-    # 1. **CRITICAL FIX:** Isolated Asyncio loop for stability
     try:
+        # **CRITICAL FIX:** Isolated Asyncio loop for stability
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
@@ -274,7 +275,6 @@ def monitor():
         except Exception as e:
             error_msg = f"ERROR: Monitor failed to fetch or process data. Retrying in 3 minutes.\nDetails: {e}"
             print(error_msg)
-            # Use the dedicated loop to send status/error alerts
             loop.run_until_complete(async_send_status(error_msg, is_error=True)) 
             is_first_run = True 
         
@@ -286,14 +286,20 @@ def home():
     return "<h1>CRUDE OIL SCANNER (Indian Style) RUNNING - Check Telegram!</h1>"
 
 if __name__ == "__main__":
-    # **RE-ADDED THE BLOCK**
-    # **CRITICAL FIX FOR ASYNC/THREADING CONFLICT**:
-    # Tells Python to clean up the loop after the worker thread is done.
-    # This prevents the 'Event loop is closed' error when the process tries to exit.
     
-    # 1. Start monitoring thread first
+    # 1. **FINAL CRITICAL FIX**: Gracefully close the main event loop before starting the thread.
+    # This resolves the 'Event loop is closed' conflict when using 'python app.py'.
+    try:
+        main_loop = asyncio.get_event_loop()
+        main_loop.stop()
+        main_loop.close()
+    except Exception as e:
+        # Ignore errors if the loop hasn't started yet
+        pass
+        
+    # 2. Start monitoring thread 
     threading.Thread(target=monitor, daemon=True).start()
     
-    # 2. Start Flask app
+    # 3. Start Flask app
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
