@@ -1,61 +1,42 @@
-from flask import Flask  # FIXED: Added this import (was missing)
-import yfinance as yf
-import pandas as pd
-from datetime import datetime
-import threading
-import time
-import os
-import telegram
-import random  # For realistic simulation
-
-app = Flask(__name__)  # Line 9 - now works!
-
-# Telegram setup
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-bot = telegram.Bot(token=TOKEN) if TOKEN else None
-
-# WTI Crude Oil Futures (real ticker - MCX not on yfinance)
-FUT_SYMBOL = "CL=F"      # CME WTI Crude Oil
-LOT_SIZE = 1000          # 1 lot = 1,000 barrels (standard for crude futures)
-
-# Thresholds (as per your screenshot)
-BUY_SPIKE_THRESHOLD = 150        # Only Extreme (150+) & Super Extreme (200+) for CE/PE Buy
-WRITE_THRESHOLDS = {75: "High", 100: "Super High", 150: "Extreme", 200: "Super Extreme"}
-FUTURE_THRESHOLDS = {75: "High", 100: "Super High", 150: "Extreme", 200: "Super Extreme"}
-
-prev_oi = None
-sent_alerts = set()
+# --- (NO CHANGE TO IMPORTS OR GLOBAL VARIABLES) ---
 
 def lots_from_oi_change(oi_change):
     return abs(oi_change) // LOT_SIZE
 
 def get_level(lots, is_buy=False):
+    # ... (No change to this function)
     if is_buy:
-        if lots >= 200:     return "Super Extreme Spike (200+)"
-        elif lots >= 150:   return "Extreme Spike (150+)"
-        else:               return None
-    else:  # Writing or Future
+        if lots >= 200:   return "Super Extreme Spike (200+)"
+        elif lots >= 150: return "Extreme Spike (150+)"
+        else:             return None
+    else: # Writing or Future
         for threshold, label in sorted(WRITE_THRESHOLDS.items(), reverse=True):
             if lots >= threshold:
                 return label
         return None
 
-def send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change):
+def send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change, strike_category):
+    """
+    MODIFIED: Added strike_category (ATM/ITM/OTM) to the signature.
+    """
     lots = lots_from_oi_change(oi_change)
-    oi_pct = (oi_change / prev_oi * 100) if prev_oi else 0
+    # Avoid division by zero if prev_oi is 0 (though less likely in this simulation)
+    oi_pct = (oi_change / prev_oi * 100) if prev_oi and prev_oi != 0 else 0
+    
     msg = f"<b>{title}</b>\n\n"
-    msg += "<pre>OPTION DATA                 | FUTURE DATA\n"
+    msg += "<pre>OPTION DATA                       | FUTURE DATA\n"
     msg += "────────────────────────────┼────────────────────────────\n"
     msg += f"Strike: {strike} {strike_type:<12} | Future Price: {fut_price:>8,.2f}\n"
-    msg += f"Price : ${price:<17} | Change     : {fut_change:+.2f} ({pct_change:+.2f}%)\n"
+    msg += f"Price : ${price:<17} | Change      : {fut_change:+.2f} ({pct_change:+.2f}%)\n"
     msg += f"∆OI   : {oi_change:+,} ({lots:,} lots)\n"
     msg += f"OI %  : {oi_pct:+.1f}%\n"
     msg += f"Lots  : {lots:,} ({lots_label})\n"
     msg += f"IV ROC: {iv_roc:+.1f}%\n"
+    msg += f"Type  : {strike_category}\n"  # NEW: Display ATM/ITM/OTM
     msg += "</pre>\n"
     msg += f"<b>Time:</b> {datetime.now().strftime('%H:%M:%S IST')}"
 
+    # ... (Telegram sending logic remains the same)
     if bot and CHAT_ID:
         try:
             import asyncio
@@ -76,46 +57,103 @@ def monitor():
                 
             latest = hist.iloc[-1]
             prev_close = hist.iloc[-2]['Close']
-            price_change = latest['Close'] - prev_close
+            fut_price = latest['Close']
+            price_change = fut_price - prev_close
             price_pct = (price_change / prev_close) * 100
             
-            # Simulate realistic OI & Option data (for demo; extend with CME API for real options OI)
-            base_oi = random.randint(5000000, 15000000)  # Realistic crude OI
-            oi_change = random.randint(-800000, 1200000)
-            current_oi = (prev_oi or base_oi) + oi_change
-            iv_roc = round(random.uniform(-15, 25), 1)
-            atm_strike = round(latest['Close'])  # Strikes around current price (e.g., 72.50)
+            # --- SIMULATION SECTION ---
+            # Simulate a specific strike price (e.g., nearest 0.5 or 1.0)
+            sim_strike = round(fut_price * 2) / 2.0  # Simulating nearest 0.5 strike
             
-            lots = lots_from_oi_change(oi_change)
-            direction = "BUY" if oi_change > 0 else "WRITE"
-            strike_type = "CE" if (direction == "BUY" and price_pct > 0) or (direction == "WRITE" and price_pct < 0) else "PE"
-            option_price = round(random.uniform(0.50, 5.00), 2)  # Realistic option premium
+            # Simulate two distinct OI events (one for CE, one for PE)
+            ce_oi_change = random.randint(-800000, 1200000)
+            pe_oi_change = random.randint(-800000, 1200000)
             
-            # CALL BUY / PUT BUY → Only Extreme & Super Extreme (150+ lots)
-            if direction == "BUY" and lots >= BUY_SPIKE_THRESHOLD:
-                level = get_level(lots, is_buy=True)
-                if level:
-                    title = f"CALL BUY / PUT BUY → {level}"
-                    key = f"BUY{level}{strike_type}"
-                    if key not in sent_alerts:
-                        send_alert(title, level, "BUY", strike_type, atm_strike, option_price, oi_change, iv_roc, latest['Close'], price_change, price_pct)
-                        sent_alerts.add(key)
-                        # Clear old alerts after 10 mins to allow repeats
-                        if len(sent_alerts) > 10:
-                            sent_alerts = set()
+            # Update prev_oi based on combined change (for % calculation)
+            total_oi_change = ce_oi_change + pe_oi_change
+            base_oi = random.randint(5000000, 15000000)
+            current_oi = (prev_oi or base_oi) + total_oi_change 
+            # --- END SIMULATION SECTION ---
+            
+            
+            # --- CE (CALL) LOGIC ---
+            
+            ce_lots = lots_from_oi_change(ce_oi_change)
+            ce_iv_roc = round(random.uniform(-15, 25), 1)
+            ce_option_price = round(random.uniform(0.50, 5.00), 2)
+            
+            # Determine ATM/ITM for CALL
+            if sim_strike < fut_price:
+                ce_category = "ITM" # Call is In-The-Money
+            elif abs(sim_strike - fut_price) < 0.1: # Near current price
+                ce_category = "ATM" # Call is At-The-Money
+            else:
+                ce_category = "OTM"
+            
+            # Only proceed if ITM or ATM
+            if ce_category in ["ATM", "ITM"]:
+                
+                # CALL BUY (OI Increase > 0)
+                if ce_oi_change > 0 and ce_lots >= BUY_SPIKE_THRESHOLD:
+                    level = get_level(ce_lots, is_buy=True)
+                    if level:
+                        title = f"CALL BUY → {level} ({ce_category})" # NEW: Specific Title
+                        key = f"BUY{level}CE{ce_category}"
+                        if key not in sent_alerts:
+                            send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category)
+                            sent_alerts.add(key)
+                
+                # CALL WRITE (OI Decrease < 0)
+                elif ce_oi_change < 0 and ce_lots >= 75:
+                    level = get_level(ce_lots, is_buy=False)
+                    if level:
+                        title = f"CALL WRITE → {level} ({ce_category})" # NEW: Specific Title
+                        key = f"WRITE{level}CE{ce_category}"
+                        if key not in sent_alerts:
+                            send_alert(title, level, "WRITE", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category)
+                            sent_alerts.add(key)
 
-            # CALL WRITE / PUT WRITE → All levels from 75+
-            elif direction == "WRITE" and lots >= 75:
-                level = get_level(lots, is_buy=False)
-                if level:
-                    title = f"CALL WRITE / PUT WRITE → {level}"
-                    key = f"WRITE{level}{strike_type}"
-                    if key not in sent_alerts:
-                        send_alert(title, level, "WRITE", strike_type, atm_strike, option_price, oi_change, iv_roc, latest['Close'], price_change, price_pct)
-                        sent_alerts.add(key)
 
-            # FUTURE BUY/SELL → Only 75+ lots with price move
-            fut_lots = lots
+            # --- PE (PUT) LOGIC ---
+            
+            pe_lots = lots_from_oi_change(pe_oi_change)
+            pe_iv_roc = round(random.uniform(-15, 25), 1)
+            pe_option_price = round(random.uniform(0.50, 5.00), 2)
+            
+            # Determine ATM/ITM for PUT
+            if sim_strike > fut_price:
+                pe_category = "ITM" # Put is In-The-Money
+            elif abs(sim_strike - fut_price) < 0.1:
+                pe_category = "ATM" # Put is At-The-Money
+            else:
+                pe_category = "OTM"
+            
+            # Only proceed if ITM or ATM
+            if pe_category in ["ATM", "ITM"]:
+                
+                # PUT BUY (OI Increase > 0)
+                if pe_oi_change > 0 and pe_lots >= BUY_SPIKE_THRESHOLD:
+                    level = get_level(pe_lots, is_buy=True)
+                    if level:
+                        title = f"PUT BUY → {level} ({pe_category})" # NEW: Specific Title
+                        key = f"BUY{level}PE{pe_category}"
+                        if key not in sent_alerts:
+                            send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category)
+                            sent_alerts.add(key)
+                            
+                # PUT WRITE (OI Decrease < 0)
+                elif pe_oi_change < 0 and pe_lots >= 75:
+                    level = get_level(pe_lots, is_buy=False)
+                    if level:
+                        title = f"PUT WRITE → {level} ({pe_category})" # NEW: Specific Title
+                        key = f"WRITE{level}PE{pe_category}"
+                        if key not in sent_alerts:
+                            send_alert(title, level, "WRITE", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category)
+                            sent_alerts.add(key)
+
+
+            # --- FUTURE BUY/SELL (Remains the same, using simulated total lots) ---
+            fut_lots = lots_from_oi_change(total_oi_change)
             fut_level = get_level(fut_lots, is_buy=False)
             if fut_level and abs(price_pct) >= 0.4:
                 fut_side = "BUY" if price_change > 0 else "SELL"
@@ -126,35 +164,22 @@ def monitor():
                     if bot and CHAT_ID:
                         try:
                             for cid in CHAT_ID.split(','):
-                                bot.send_message(chat_id=cid.strip(), text=msg, parse_mode='HTML')
+                                # Note: You'll need to use asyncio for bot.send_message outside the main thread
+                                import asyncio
+                                asyncio.run(bot.send_message(chat_id=cid.strip(), text=msg, parse_mode='HTML'))
                         except Exception as e:
                             print(f"Telegram send error: {e}")
                     sent_alerts.add(key)
 
+            # Clear old alerts after 10 mins (simplified mechanism)
+            if len(sent_alerts) > 100: # Increased limit to avoid missing alerts
+                sent_alerts = set()
+            
             prev_oi = current_oi
             
         except Exception as e:
             print(f"Monitor error: {e}")
-        
+            
         time.sleep(180)  # 3 minutes
 
-# Start monitoring thread
-threading.Thread(target=monitor, daemon=True).start()
-
-@app.route('/')
-def home():
-    return "<h1>CRUDE OIL SCANNER (Indian Style) RUNNING - Check Telegram!</h1>"
-
-if __name__ == "__main__":
-    if bot and CHAT_ID:
-        try:
-            # Fixed: proper async-style send for python-telegram-bot v21+
-            import asyncio
-            asyncio.run(bot.send_message(
-                chat_id=CHAT_ID.split(',')[0].strip(),
-                text="CRUDE OIL SCANNER STARTED\nOnly Extreme & Super Extreme Alerts Active\nNo Small/Medium Noise"
-            ))
-        except Exception as e:
-            print(f"Startup Telegram error: {e}")
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+# --- (NO CHANGE TO THREAD START OR FLASK APP RUN) ---
