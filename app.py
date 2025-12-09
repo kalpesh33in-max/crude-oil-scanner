@@ -7,7 +7,7 @@ import time
 import os
 import telegram
 import random
-import asyncio # Ensure asyncio is imported globally for cleaner use
+import asyncio 
 
 app = Flask(__name__)
 
@@ -27,6 +27,51 @@ FUTURE_THRESHOLDS = {75: "High", 100: "Super High", 150: "Extreme", 200: "Super 
 
 prev_oi = None
 sent_alerts = set()
+
+
+# --- NEW LOGIC: WRITER ACTIVITY ANALYSIS ---
+
+def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
+    """
+    Determines the Option Writer Activity based on OI, IV, and Price Change.
+    """
+    oi_rising = oi_change > 0
+    iv_rising = iv_roc > 0
+    
+    # Check Price Movement context (Needed to align with the provided matrix)
+    # Price Movement UP favors CALLs, Price Movement DOWN favors PUTs
+    price_favors_call = price_change > 0.05 # Use a small buffer to define movement
+    price_favors_put = price_change < -0.05
+    
+    # 1. New OI (OI Increase)
+    if oi_rising:
+        if iv_rising:
+            # OI ^ + IV ^ (Hedging / Forced Writing)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                 return "Hedging / Forced Writing (New writing happening, rising IV suggests it's not a confident, low-risk bet.)"
+            # If a BUY alert, it is Strong Accumulation / High Volatility Buy
+            return "Strong Accumulation / High Volatility Buy" 
+
+        else: # IV falling
+            # OI ^ + IV v (Fresh Writing / Position Building)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Fresh Writing / Position Building (Writers are actively selling new contracts, believing volatility is low.)"
+            # If a BUY alert, it is Strong Accumulation / Low Volatility Buy
+            return "Strong Accumulation / Low Volatility Buy"
+
+    # 2. Position Exit (OI Decrease) - Note: Absolute value of OI change is used in lots calculation
+    else:
+        if iv_rising:
+            # OI v + IV ^ (Unwinding / Position Exiting)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Unwinding / Position Exiting (Writers actively buying back to close positions due to higher risk/IV.)"
+            # If a WRITE alert, it is Profit Booking / Minor Exit
+            return "Liquidation / Forced Exit by Buyers" 
+            
+        else: # IV falling
+            # OI v + IV v (Profit Booking / Minor Exit)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor, low IV suggests no new risk.)"
+            # If a WRITE alert, it is Liquidation / Forced Exit by Buyers
+            return "Profit Booking by Buyers / Low Volatility Exit"
+
+# ------------------------------------------------------------------------------------------------------
 
 
 # --- ASYNC/STATUS HELPERS (RUN BY THE MONITOR THREAD) ---
@@ -54,9 +99,9 @@ def get_level(lots, is_buy=False):
                 return label
         return None
 
-async def async_send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change, strike_category):
+async def async_send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change, strike_category, writer_activity):
     """
-    ASYNC version of send_alert, called from the monitoring loop.
+    MODIFIED: Now includes writer_activity in the message.
     """
     lots = lots_from_oi_change(oi_change)
     oi_pct = (oi_change / prev_oi * 100) if prev_oi and prev_oi != 0 else 0
@@ -72,6 +117,7 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
     msg += f"IV ROC: {iv_roc:+.1f}%\n"
     msg += f"Type  : {strike_category}\n"
     msg += "</pre>\n"
+    msg += f"<b>Activity:</b> {writer_activity}\n" # NEW LINE FOR WRITER ACTIVITY
     msg += f"<b>Time:</b> {datetime.now().strftime('%H:%M:%S IST')}"
 
     if bot and CHAT_ID:
@@ -81,18 +127,14 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
         except Exception as e:
             print(f"Telegram alert send error: {e}")
 
-# ---------------------------------------------
-
 
 def monitor():
     global prev_oi, sent_alerts
     
-    # --- SETUP INDEPENDENT ASYNCIO LOOP FOR THIS THREAD (The key fix!) ---
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
-        # Fallback if environment blocks loop creation (rare)
         print(f"Failed to create new asyncio loop: {e}")
         return
 
@@ -106,19 +148,17 @@ def monitor():
     async def run_monitoring_logic(is_first_run):
         nonlocal prev_oi, sent_alerts
         
-        # --- STARTUP ALERT FIX HERE ---
+        # --- STARTUP ALERT FIX ---
         if is_first_run:
-            # Send initial startup alert using the thread's own loop
             await async_send_status("Scanner Initializing...\nMonitoring CL=F for ATM/ITM Extreme/Super Extreme Spikes.", is_error=False)
-        # ------------------------------
+        # -------------------------
         
         
         # 1. Fetch Data
         ticker = yf.Ticker(FUT_SYMBOL)
-        # Use a non-async library (yfinance) synchronously in this async function
         hist = ticker.history(period="2d", interval="5m") 
         if len(hist) < 2:
-            return # Skip and wait for the next run
+            return 
             
         latest = hist.iloc[-1]
         prev_close = hist.iloc[-2]['Close']
@@ -144,6 +184,8 @@ def monitor():
         
         if ce_category in ["ATM", "ITM"]:
             
+            ce_activity = get_writer_activity(ce_oi_change, ce_iv_roc, "CE", price_change) # Calculate Activity
+            
             # CALL BUY (OI Increase > 0)
             if ce_oi_change > 0 and ce_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(ce_lots, is_buy=True)
@@ -151,7 +193,7 @@ def monitor():
                     title = f"CALL BUY → {level} ({ce_category})"
                     key = f"BUY{level}CE{ce_category}"
                     if key not in sent_alerts:
-                        await async_send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category)
+                        await async_send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
             
             # CALL WRITE (OI Decrease < 0)
@@ -161,7 +203,7 @@ def monitor():
                     title = f"CALL WRITE → {level} ({ce_category})"
                     key = f"WRITE{level}CE{ce_category}"
                     if key not in sent_alerts:
-                        await async_send_alert(title, level, "WRITE", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category)
+                        await async_send_alert(title, level, "WRITE", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
 
 
@@ -174,6 +216,8 @@ def monitor():
 
         if pe_category in ["ATM", "ITM"]:
             
+            pe_activity = get_writer_activity(pe_oi_change, pe_iv_roc, "PE", price_change) # Calculate Activity
+            
             # PUT BUY (OI Increase > 0)
             if pe_oi_change > 0 and pe_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(pe_lots, is_buy=True)
@@ -181,7 +225,7 @@ def monitor():
                     title = f"PUT BUY → {level} ({pe_category})"
                     key = f"BUY{level}PE{pe_category}"
                     if key not in sent_alerts:
-                        await async_send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category)
+                        await async_send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
                         
             # PUT WRITE (OI Decrease < 0)
@@ -191,10 +235,10 @@ def monitor():
                     title = f"PUT WRITE → {level} ({pe_category})"
                     key = f"WRITE{level}PE{pe_category}"
                     if key not in sent_alerts:
-                        await async_send_alert(title, level, "WRITE", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category)
+                        await async_send_alert(title, level, "WRITE", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
 
-        # 5. FUTURE BUY/SELL
+        # 5. FUTURE BUY/SELL (No Activity logic needed for Futures)
         fut_lots = lots_from_oi_change(total_oi_change)
         fut_level = get_level(fut_lots, is_buy=False)
         if fut_level and abs(price_pct) >= 0.4:
@@ -216,26 +260,23 @@ def monitor():
             sent_alerts = set()
         
         # 7. Update Global OI
-        # Note: Must ensure prev_oi is updated correctly in the loop structure.
         globals()['prev_oi'] = current_oi
+
 
     # Main monitoring loop (Synchronous part)
     is_first_run = True
     while True:
         try:
-            # Run the entire async logic using the dedicated loop
             loop.run_until_complete(run_monitoring_logic(is_first_run))
-            is_first_run = False # Only first run sends the initial status message
+            is_first_run = False 
             
         except Exception as e:
-            # Report the error via Telegram and logs
             error_msg = f"ERROR: Monitor failed to fetch or process data. Retrying in 3 minutes.\nDetails: {e}"
             print(error_msg)
-            # Use the loop to send the async status message
             loop.run_until_complete(async_send_status(error_msg, is_error=True))
-            is_first_run = True # Set flag to send the "restarted" status on next successful run
+            is_first_run = True 
         
-        time.sleep(180) # 3 minutes delay
+        time.sleep(180) 
 
 
 # Start monitoring thread
@@ -246,8 +287,5 @@ def home():
     return "<h1>CRUDE OIL SCANNER (Indian Style) RUNNING - Check Telegram!</h1>"
 
 if __name__ == "__main__":
-    # --- CRITICAL FIX: Removed ALL startup bot logic from the main thread ---
-    # The monitor thread now handles the initial startup alert.
-    
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
