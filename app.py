@@ -147,8 +147,13 @@ def home():
 if __name__ == "__main__":
     if bot and CHAT_ID:
         try:
-            bot.send_message(chat_id=CHAT_ID.split(',')[0], text="CRUDE OIL SCANNER STARTED\nOnly Extreme & Super Extreme Alerts Active\nNo Small/Medium Noise")
+            # Fixed: proper async-style send for python-telegram-bot v21+
+            import asyncio
+            asyncio.run(bot.send_message(
+                chat_id=CHAT_ID.split(',')[0].strip(),
+                text="CRUDE OIL SCANNER STARTED\nOnly Extreme & Super Extreme Alerts Active\nNo Small/Medium Noise"
+            ))
         except Exception as e:
             print(f"Startup Telegram error: {e}")
     port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)  # debug=False for production
+    app.run(host='0.0.0.0', port=port)
