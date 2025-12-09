@@ -129,11 +129,13 @@ def monitor():
     global prev_oi, sent_alerts
     
     try:
+        # **THIS IS THE CRITICAL FIX:** Creates an isolated Asyncio loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
-        print(f"Failed to create new asyncio loop: {e}")
+        # ... error handling ...
         return
+    # ... rest of the monitoring logic runs inside this isolated loop
 
     async def async_send_status(status_text, is_error):
         if bot and CHAT_ID:
