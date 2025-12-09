@@ -62,8 +62,8 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 1. New OI (OI Increase)
     if oi_rising:
         if iv_rising:
+            # OI ^ + IV ^ 
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
-                 # OI ^ + IV ^ 
                  return "Hedging / Forced Writing (Rising IV suggests high risk for sellers.)"
             return "Strong Accumulation / High Volatility Buy" 
 
@@ -145,7 +145,7 @@ def monitor():
     global prev_oi, sent_alerts
     
     try:
-        # **Simplified loop creation due to global policy patch**
+        # Loop creation is now safe due to the global patch
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
@@ -163,7 +163,7 @@ def monitor():
         if is_first_run:
             await async_send_status("Scanner Initializing...\nMonitoring CL=F for ATM/ITM Extreme/Super Extreme Spikes.", is_error=False)
         
-        # 1. Fetch Data
+        # 1. Fetch Data (Data fetching logic omitted for brevity)
         ticker = yf.Ticker(FUT_SYMBOL)
         hist = ticker.history(period="2d", interval="5m") 
         if len(hist) < 2:
@@ -175,7 +175,7 @@ def monitor():
         price_change = fut_price - prev_close
         price_pct = (price_change / prev_close) * 100
         
-        # 2. Simulation
+        # 2. Simulation (Simulation logic omitted for brevity)
         sim_strike = round(fut_price * 2) / 2.0
         ce_oi_change = random.randint(-800000, 1200000)
         pe_oi_change = random.randint(-800000, 1200000)
@@ -183,24 +183,19 @@ def monitor():
         base_oi = random.randint(5000000, 15000000)
         current_oi = (prev_oi or base_oi) + total_oi_change 
         
-        
+        # ... (rest of the monitoring logic is unchanged) ...
         # 3. CE (CALL) LOGIC
         ce_lots = lots_from_oi_change(ce_oi_change)
         ce_iv_roc = round(random.uniform(-15, 25), 1)
-        
-        # ITM/ATM Category Check
         ce_category = "ITM" if sim_strike < fut_price else ("ATM" if abs(sim_strike - fut_price) < 0.1 else "OTM")
-        
-        # PRICE SIMULATION FIX: Higher price for ITM options
         ce_option_price = round(random.uniform(0.50, 5.00), 2)
         if ce_category == "ITM":
             ce_option_price = round(random.uniform(10.00, 20.00), 2) 
 
         if ce_category in ["ATM", "ITM"]:
             
-            ce_activity = get_writer_activity(ce_oi_change, ce_iv_roc, "CE", price_change) # Calculate Activity
+            ce_activity = get_writer_activity(ce_oi_change, ce_iv_roc, "CE", price_change) 
 
-            # CALL BUY (OI Increase > 0)
             if ce_oi_change > 0 and ce_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(ce_lots, is_buy=True)
                 if level:
@@ -210,7 +205,6 @@ def monitor():
                         await async_send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
             
-            # CALL WRITE (OI Decrease < 0)
             elif ce_oi_change < 0 and ce_lots >= 75:
                 level = get_level(ce_lots, is_buy=False)
                 if level:
@@ -224,20 +218,15 @@ def monitor():
         # 4. PE (PUT) LOGIC
         pe_lots = lots_from_oi_change(pe_oi_change)
         pe_iv_roc = round(random.uniform(-15, 25), 1)
-        
-        # ITM/ATM Category Check
         pe_category = "ITM" if sim_strike > fut_price else ("ATM" if abs(sim_strike - fut_price) < 0.1 else "OTM")
-
-        # PRICE SIMULATION FIX: Higher price for ITM options
         pe_option_price = round(random.uniform(0.50, 5.00), 2)
         if pe_category == "ITM":
             pe_option_price = round(random.uniform(10.00, 20.00), 2) 
 
         if pe_category in ["ATM", "ITM"]:
             
-            pe_activity = get_writer_activity(pe_oi_change, pe_iv_roc, "PE", price_change) # Calculate Activity
+            pe_activity = get_writer_activity(pe_oi_change, pe_iv_roc, "PE", price_change) 
 
-            # PUT BUY (OI Increase > 0)
             if pe_oi_change > 0 and pe_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(pe_lots, is_buy=True)
                 if level:
@@ -247,7 +236,6 @@ def monitor():
                         await async_send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
                         
-            # PUT WRITE (OI Decrease < 0)
             elif pe_oi_change < 0 and pe_lots >= 75:
                 level = get_level(pe_lots, is_buy=False)
                 if level:
@@ -297,15 +285,14 @@ def monitor():
         time.sleep(180) 
 
 
+# --- GUNICORN COMPATIBLE STARTUP ---
+
+# 1. Start monitoring thread immediately when the file is loaded by Gunicorn.
+threading.Thread(target=monitor, daemon=True).start()
+
 @app.route('/')
 def home():
     return "<h1>CRUDE OIL SCANNER (Indian Style) RUNNING - Check Telegram!</h1>"
 
-if __name__ == "__main__":
-    
-    # 1. Start monitoring thread 
-    threading.Thread(target=monitor, daemon=True).start()
-    
-    # 2. Start Flask app
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+# 2. **REMOVE** the 'if __name__ == "__main__":' block.
+# Gunicorn handles starting the app externally via the 'gunicorn app:app' command.
