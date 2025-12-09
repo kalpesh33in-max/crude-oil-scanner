@@ -1,5 +1,4 @@
-flask
+Flask
 yfinance
 pandas
-python-telegram-bot==21.4
-gunicorn==22.0.0
+python-telegram-bot
