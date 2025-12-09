@@ -45,13 +45,13 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 1. New OI (OI Increase)
     if oi_rising:
         if iv_rising:
-            # OI ^ + IV ^ 
+            # OI ^ + IV ^ (Hedging / Forced Writing)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                  return "Hedging / Forced Writing (Rising IV suggests high risk for sellers.)"
             return "Strong Accumulation / High Volatility Buy" 
 
         else: # IV falling
-            # OI ^ + IV v
+            # OI ^ + IV v (Fresh Writing / Position Building)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Fresh Writing / Position Building (Writers are actively selling new contracts, high conviction.)"
             return "Strong Accumulation / Low Volatility Buy"
@@ -59,13 +59,13 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 2. Position Exit (OI Decrease)
     else:
         if iv_rising:
-            # OI v + IV ^ 
+            # OI v + IV ^ (Unwinding / Position Exiting)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Unwinding / Position Exiting (Writers actively buying back due to higher risk/IV.)"
             return "Liquidation / Forced Exit by Buyers" 
             
         else: # IV falling
-            # OI v + IV v 
+            # OI v + IV v (Profit Booking / Minor Exit)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
                 return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor.)"
             return "Profit Booking by Buyers / Low Volatility Exit"
@@ -97,7 +97,7 @@ def get_level(lots, is_buy=False):
 
 async def async_send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change, strike_category, writer_activity):
     """
-    FIXED: Ensures writer_activity is included in the message.
+    Ensures writer_activity is included in the message.
     """
     lots = lots_from_oi_change(oi_change)
     oi_pct = (oi_change / prev_oi * 100) if prev_oi and prev_oi != 0 else 0
@@ -106,7 +106,6 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
     msg += "<pre>OPTION DATA                       | FUTURE DATA\n"
     msg += "────────────────────────────┼────────────────────────────\n"
     msg += f"Strike: {strike} {strike_type:<12} | Future Price: {fut_price:>8,.2f}\n"
-    # Note: ITM simulated prices will be visibly higher now (e.g., $10.00+)
     msg += f"Price : ${price:<17} | Change      : {fut_change:+.2f} ({pct_change:+.2f}%)\n"
     msg += f"∆OI   : {oi_change:+,} ({lots:,} lots)\n"
     msg += f"OI %  : {oi_pct:+.1f}%\n"
@@ -129,13 +128,12 @@ def monitor():
     global prev_oi, sent_alerts
     
     try:
-        # **THIS IS THE CRITICAL FIX:** Creates an isolated Asyncio loop
+        # **CRITICAL FIX:** Isolated Asyncio loop for stability
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
-        # ... error handling ...
+        print(f"Failed to create new asyncio loop: {e}")
         return
-    # ... rest of the monitoring logic runs inside this isolated loop
 
     async def async_send_status(status_text, is_error):
         if bot and CHAT_ID:
@@ -179,7 +177,6 @@ def monitor():
         # PRICE SIMULATION FIX: Higher price for ITM options
         ce_option_price = round(random.uniform(0.50, 5.00), 2)
         if ce_category == "ITM":
-             # Simulate Intrinsic Value + Time Value (e.g., $10 to $20)
             ce_option_price = round(random.uniform(10.00, 20.00), 2) 
 
         if ce_category in ["ATM", "ITM"]:
@@ -193,7 +190,6 @@ def monitor():
                     title = f"CALL BUY → {level} ({ce_category})"
                     key = f"BUY{level}CE{ce_category}"
                     if key not in sent_alerts:
-                        # PASSING ce_activity
                         await async_send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
             
@@ -204,7 +200,6 @@ def monitor():
                     title = f"CALL WRITE → {level} ({ce_category})"
                     key = f"WRITE{level}CE{ce_category}"
                     if key not in sent_alerts:
-                        # PASSING ce_activity
                         await async_send_alert(title, level, "WRITE", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
 
@@ -219,7 +214,6 @@ def monitor():
         # PRICE SIMULATION FIX: Higher price for ITM options
         pe_option_price = round(random.uniform(0.50, 5.00), 2)
         if pe_category == "ITM":
-            # Simulate Intrinsic Value + Time Value (e.g., $10 to $20)
             pe_option_price = round(random.uniform(10.00, 20.00), 2) 
 
         if pe_category in ["ATM", "ITM"]:
@@ -233,7 +227,6 @@ def monitor():
                     title = f"PUT BUY → {level} ({pe_category})"
                     key = f"BUY{level}PE{pe_category}"
                     if key not in sent_alerts:
-                        # PASSING pe_activity
                         await async_send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
                         
@@ -244,7 +237,6 @@ def monitor():
                     title = f"PUT WRITE → {level} ({pe_category})"
                     key = f"WRITE{level}PE{pe_category}"
                     if key not in sent_alerts:
-                        # PASSING pe_activity
                         await async_send_alert(title, level, "WRITE", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
 
@@ -282,19 +274,21 @@ def monitor():
         except Exception as e:
             error_msg = f"ERROR: Monitor failed to fetch or process data. Retrying in 3 minutes.\nDetails: {e}"
             print(error_msg)
-            loop.run_until_complete(async_send_status(error_msg, is_error=True))
+            # Use the dedicated loop to send status/error alerts
+            loop.run_until_complete(async_send_status(error_msg, is_error=True)) 
             is_first_run = True 
         
         time.sleep(180) 
 
 
-# Start monitoring thread
+# --- NEW STARTUP BLOCK: Ensures monitor thread starts when Gunicorn loads the file ---
+
+# Start monitoring thread immediately when the file is loaded (e.g., by Gunicorn)
 threading.Thread(target=monitor, daemon=True).start()
 
 @app.route('/')
 def home():
     return "<h1>CRUDE OIL SCANNER (Indian Style) RUNNING - Check Telegram!</h1>"
 
-if __name__ == "__main__":
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+# **DO NOT** include the 'if __name__ == "__main__":' block here.
+# Gunicorn handles starting the app externally via the 'gunicorn app:app' command.
