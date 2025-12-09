@@ -29,7 +29,7 @@ prev_oi = None
 sent_alerts = set()
 
 
-# --- NEW LOGIC: WRITER ACTIVITY ANALYSIS ---
+# --- WRITER ACTIVITY ANALYSIS ---
 
 def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     """
@@ -38,43 +38,39 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     oi_rising = oi_change > 0
     iv_rising = iv_roc > 0
     
-    # Check Price Movement context (Needed to align with the provided matrix)
-    # Price Movement UP favors CALLs, Price Movement DOWN favors PUTs
-    price_favors_call = price_change > 0.05 # Use a small buffer to define movement
+    # Use a small buffer to define price movement (0.05 or more)
+    price_favors_call = price_change > 0.05 
     price_favors_put = price_change < -0.05
     
     # 1. New OI (OI Increase)
     if oi_rising:
         if iv_rising:
-            # OI ^ + IV ^ (Hedging / Forced Writing)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
-                 return "Hedging / Forced Writing (New writing happening, rising IV suggests it's not a confident, low-risk bet.)"
-            # If a BUY alert, it is Strong Accumulation / High Volatility Buy
+            # OI ^ + IV ^ 
+            if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                 return "Hedging / Forced Writing (Rising IV suggests high risk for sellers.)"
             return "Strong Accumulation / High Volatility Buy" 
 
         else: # IV falling
-            # OI ^ + IV v (Fresh Writing / Position Building)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
-                return "Fresh Writing / Position Building (Writers are actively selling new contracts, believing volatility is low.)"
-            # If a BUY alert, it is Strong Accumulation / Low Volatility Buy
+            # OI ^ + IV v
+            if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Fresh Writing / Position Building (Writers are actively selling new contracts, high conviction.)"
             return "Strong Accumulation / Low Volatility Buy"
 
-    # 2. Position Exit (OI Decrease) - Note: Absolute value of OI change is used in lots calculation
+    # 2. Position Exit (OI Decrease)
     else:
         if iv_rising:
-            # OI v + IV ^ (Unwinding / Position Exiting)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
-                return "Unwinding / Position Exiting (Writers actively buying back to close positions due to higher risk/IV.)"
-            # If a WRITE alert, it is Profit Booking / Minor Exit
+            # OI v + IV ^ 
+            if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Unwinding / Position Exiting (Writers actively buying back due to higher risk/IV.)"
             return "Liquidation / Forced Exit by Buyers" 
             
         else: # IV falling
-            # OI v + IV v (Profit Booking / Minor Exit)             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
-                return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor, low IV suggests no new risk.)"
-            # If a WRITE alert, it is Liquidation / Forced Exit by Buyers
+            # OI v + IV v 
+            if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor.)"
             return "Profit Booking by Buyers / Low Volatility Exit"
 
-# ------------------------------------------------------------------------------------------------------
-
-
-# --- ASYNC/STATUS HELPERS (RUN BY THE MONITOR THREAD) ---
+# --- ASYNC/STATUS HELPERS ---
 
 async def async_send_message(cid, message, is_error):
     """Internal async helper to send a message."""
@@ -101,7 +97,7 @@ def get_level(lots, is_buy=False):
 
 async def async_send_alert(title, lots_label, side, strike_type, strike, price, oi_change, iv_roc, fut_price, fut_change, pct_change, strike_category, writer_activity):
     """
-    MODIFIED: Now includes writer_activity in the message.
+    FIXED: Ensures writer_activity is included in the message.
     """
     lots = lots_from_oi_change(oi_change)
     oi_pct = (oi_change / prev_oi * 100) if prev_oi and prev_oi != 0 else 0
@@ -110,6 +106,7 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
     msg += "<pre>OPTION DATA                       | FUTURE DATA\n"
     msg += "────────────────────────────┼────────────────────────────\n"
     msg += f"Strike: {strike} {strike_type:<12} | Future Price: {fut_price:>8,.2f}\n"
+    # Note: ITM simulated prices will be visibly higher now (e.g., $10.00+)
     msg += f"Price : ${price:<17} | Change      : {fut_change:+.2f} ({pct_change:+.2f}%)\n"
     msg += f"∆OI   : {oi_change:+,} ({lots:,} lots)\n"
     msg += f"OI %  : {oi_pct:+.1f}%\n"
@@ -117,7 +114,7 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
     msg += f"IV ROC: {iv_roc:+.1f}%\n"
     msg += f"Type  : {strike_category}\n"
     msg += "</pre>\n"
-    msg += f"<b>Activity:</b> {writer_activity}\n" # NEW LINE FOR WRITER ACTIVITY
+    msg += f"<b>Activity:</b> {writer_activity}\n"
     msg += f"<b>Time:</b> {datetime.now().strftime('%H:%M:%S IST')}"
 
     if bot and CHAT_ID:
@@ -138,21 +135,16 @@ def monitor():
         print(f"Failed to create new asyncio loop: {e}")
         return
 
-    # Helper to send status within this thread's loop
     async def async_send_status(status_text, is_error):
         if bot and CHAT_ID:
             for cid in CHAT_ID.split(','):
                 await async_send_message(cid, status_text, is_error)
 
-    # Main async logic that runs inside the thread's loop
     async def run_monitoring_logic(is_first_run):
         nonlocal prev_oi, sent_alerts
         
-        # --- STARTUP ALERT FIX ---
         if is_first_run:
             await async_send_status("Scanner Initializing...\nMonitoring CL=F for ATM/ITM Extreme/Super Extreme Spikes.", is_error=False)
-        # -------------------------
-        
         
         # 1. Fetch Data
         ticker = yf.Ticker(FUT_SYMBOL)
@@ -178,14 +170,20 @@ def monitor():
         # 3. CE (CALL) LOGIC
         ce_lots = lots_from_oi_change(ce_oi_change)
         ce_iv_roc = round(random.uniform(-15, 25), 1)
-        ce_option_price = round(random.uniform(0.50, 5.00), 2)
         
+        # ITM/ATM Category Check
         ce_category = "ITM" if sim_strike < fut_price else ("ATM" if abs(sim_strike - fut_price) < 0.1 else "OTM")
         
+        # PRICE SIMULATION FIX: Higher price for ITM options
+        ce_option_price = round(random.uniform(0.50, 5.00), 2)
+        if ce_category == "ITM":
+             # Simulate Intrinsic Value + Time Value (e.g., $10 to $20)
+            ce_option_price = round(random.uniform(10.00, 20.00), 2) 
+
         if ce_category in ["ATM", "ITM"]:
             
             ce_activity = get_writer_activity(ce_oi_change, ce_iv_roc, "CE", price_change) # Calculate Activity
-            
+
             # CALL BUY (OI Increase > 0)
             if ce_oi_change > 0 and ce_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(ce_lots, is_buy=True)
@@ -193,6 +191,7 @@ def monitor():
                     title = f"CALL BUY → {level} ({ce_category})"
                     key = f"BUY{level}CE{ce_category}"
                     if key not in sent_alerts:
+                        # PASSING ce_activity
                         await async_send_alert(title, level, "BUY", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
             
@@ -203,6 +202,7 @@ def monitor():
                     title = f"CALL WRITE → {level} ({ce_category})"
                     key = f"WRITE{level}CE{ce_category}"
                     if key not in sent_alerts:
+                        # PASSING ce_activity
                         await async_send_alert(title, level, "WRITE", "CE", sim_strike, ce_option_price, ce_oi_change, ce_iv_roc, fut_price, price_change, price_pct, ce_category, ce_activity)
                         sent_alerts.add(key)
 
@@ -210,14 +210,20 @@ def monitor():
         # 4. PE (PUT) LOGIC
         pe_lots = lots_from_oi_change(pe_oi_change)
         pe_iv_roc = round(random.uniform(-15, 25), 1)
-        pe_option_price = round(random.uniform(0.50, 5.00), 2)
         
+        # ITM/ATM Category Check
         pe_category = "ITM" if sim_strike > fut_price else ("ATM" if abs(sim_strike - fut_price) < 0.1 else "OTM")
+
+        # PRICE SIMULATION FIX: Higher price for ITM options
+        pe_option_price = round(random.uniform(0.50, 5.00), 2)
+        if pe_category == "ITM":
+            # Simulate Intrinsic Value + Time Value (e.g., $10 to $20)
+            pe_option_price = round(random.uniform(10.00, 20.00), 2) 
 
         if pe_category in ["ATM", "ITM"]:
             
             pe_activity = get_writer_activity(pe_oi_change, pe_iv_roc, "PE", price_change) # Calculate Activity
-            
+
             # PUT BUY (OI Increase > 0)
             if pe_oi_change > 0 and pe_lots >= BUY_SPIKE_THRESHOLD:
                 level = get_level(pe_lots, is_buy=True)
@@ -225,6 +231,7 @@ def monitor():
                     title = f"PUT BUY → {level} ({pe_category})"
                     key = f"BUY{level}PE{pe_category}"
                     if key not in sent_alerts:
+                        # PASSING pe_activity
                         await async_send_alert(title, level, "BUY", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
                         
@@ -235,10 +242,11 @@ def monitor():
                     title = f"PUT WRITE → {level} ({pe_category})"
                     key = f"WRITE{level}PE{pe_category}"
                     if key not in sent_alerts:
+                        # PASSING pe_activity
                         await async_send_alert(title, level, "WRITE", "PE", sim_strike, pe_option_price, pe_oi_change, pe_iv_roc, fut_price, price_change, price_pct, pe_category, pe_activity)
                         sent_alerts.add(key)
 
-        # 5. FUTURE BUY/SELL (No Activity logic needed for Futures)
+        # 5. FUTURE BUY/SELL
         fut_lots = lots_from_oi_change(total_oi_change)
         fut_level = get_level(fut_lots, is_buy=False)
         if fut_level and abs(price_pct) >= 0.4:
@@ -259,7 +267,6 @@ def monitor():
         if len(sent_alerts) > 100:
             sent_alerts = set()
         
-        # 7. Update Global OI
         globals()['prev_oi'] = current_oi
 
 
