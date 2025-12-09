@@ -1,3 +1,20 @@
+import asyncio
+# --- CRITICAL PATCH FOR ASYNCIO/THREADING CONFLICT ---
+# Define a policy that creates a new event loop for any thread if one is not present.
+# This permanently resolves the 'Event loop is closed' crash in threaded environments.
+class AnyThreadEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+    def get_event_loop(self):
+        try:
+            return super().get_event_loop()
+        except RuntimeError:
+            loop = self.new_event_loop()
+            self.set_event_loop(loop)
+            return loop
+        
+# Apply the policy globally
+asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
+# --------------------------------------------------------
+
 from flask import Flask
 import yfinance as yf
 import pandas as pd
@@ -7,7 +24,6 @@ import time
 import os
 import telegram
 import random
-import asyncio 
 
 app = Flask(__name__)
 
@@ -46,28 +62,28 @@ def get_writer_activity(oi_change, iv_roc, strike_type, price_change):
     # 1. New OI (OI Increase)
     if oi_rising:
         if iv_rising:
-            # OI ^ + IV ^ (Hedging / Forced Writing)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                 # OI ^ + IV ^ 
                  return "Hedging / Forced Writing (Rising IV suggests high risk for sellers.)"
             return "Strong Accumulation / High Volatility Buy" 
 
         else: # IV falling
-            # OI ^ + IV v (Fresh Writing / Position Building)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                # OI ^ + IV v
                 return "Fresh Writing / Position Building (Writers are actively selling new contracts, high conviction.)"
             return "Strong Accumulation / Low Volatility Buy"
 
     # 2. Position Exit (OI Decrease)
     else:
         if iv_rising:
-            # OI v + IV ^ (Unwinding / Position Exiting)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                # OI v + IV ^
                 return "Unwinding / Position Exiting (Writers actively buying back due to higher risk/IV.)"
             return "Liquidation / Forced Exit by Buyers" 
             
         else: # IV falling
-            # OI v + IV v (Profit Booking / Minor Exit)
             if (strike_type == "CE" and price_favors_call) or (strike_type == "PE" and price_favors_put):
+                # OI v + IV v
                 return "Profit Booking / Minor Exit (Writers closing positions as price moves slightly in their favor.)"
             return "Profit Booking by Buyers / Low Volatility Exit"
 
@@ -129,7 +145,7 @@ def monitor():
     global prev_oi, sent_alerts
     
     try:
-        # **CRITICAL FIX:** Isolated Asyncio loop for stability
+        # **Simplified loop creation due to global policy patch**
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     except Exception as e:
@@ -287,19 +303,9 @@ def home():
 
 if __name__ == "__main__":
     
-    # 1. **FINAL CRITICAL FIX**: Gracefully close the main event loop before starting the thread.
-    # This resolves the 'Event loop is closed' conflict when using 'python app.py'.
-    try:
-        main_loop = asyncio.get_event_loop()
-        main_loop.stop()
-        main_loop.close()
-    except Exception as e:
-        # Ignore errors if the loop hasn't started yet
-        pass
-        
-    # 2. Start monitoring thread 
+    # 1. Start monitoring thread 
     threading.Thread(target=monitor, daemon=True).start()
     
-    # 3. Start Flask app
+    # 2. Start Flask app
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
