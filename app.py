@@ -119,7 +119,9 @@ async def async_send_alert(title, lots_label, side, strike_type, strike, price, 
     Ensures writer_activity is included in the message.
     """
     lots = lots_from_oi_change(oi_change)
-    oi_pct = (oi_change / prev_oi * 100) if prev_oi and prev_oi != 0 else 0
+    
+    # CRITICAL FIX: Access prev_oi safely from globals()
+    oi_pct = (oi_change / globals().get('prev_oi') * 100) if globals().get('prev_oi') and globals().get('prev_oi') != 0 else 0
     
     msg = f"<b>{title}</b>\n\n"
     msg += "<pre>OPTION DATA                       | FUTURE DATA\n"
@@ -160,12 +162,14 @@ def monitor():
                 await async_send_message(cid, status_text, is_error)
 
     async def run_monitoring_logic(is_first_run):
-        nonlocal prev_oi, sent_alerts
+        # We only need nonlocal for sent_alerts because we modify it directly.
+        # We manage prev_oi via globals()
+        nonlocal sent_alerts 
         
         if is_first_run:
             await async_send_status("Scanner Initializing...\nMonitoring CL=F for ATM/ITM Extreme/Super Extreme Spikes.", is_error=False)
         
-        # 1. Fetch Data 
+        # 1. Fetch Data
         ticker = yf.Ticker(FUT_SYMBOL)
         hist = ticker.history(period="2d", interval="5m") 
         if len(hist) < 2:
@@ -177,13 +181,15 @@ def monitor():
         price_change = fut_price - prev_close
         price_pct = (price_change / prev_close) * 100
         
-        # 2. Simulation 
+        # 2. Simulation
         sim_strike = round(fut_price * 2) / 2.0
         ce_oi_change = random.randint(-800000, 1200000)
         pe_oi_change = random.randint(-800000, 1200000)
         total_oi_change = ce_oi_change + pe_oi_change
+        
         base_oi = random.randint(5000000, 15000000)
-        current_oi = (prev_oi or base_oi) + total_oi_change 
+        # CRITICAL FIX: Use globals().get() to read prev_oi safely
+        current_oi = (globals().get('prev_oi') or base_oi) + total_oi_change 
         
         
         # 3. CE (CALL) LOGIC
@@ -280,6 +286,7 @@ def monitor():
         if len(sent_alerts) > 100:
             sent_alerts = set()
         
+        # CRITICAL FIX: Use globals() to set prev_oi safely
         globals()['prev_oi'] = current_oi
 
 
