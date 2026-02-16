@@ -16,8 +16,10 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
+# Symbols to Track (Index + Stocks)
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
+# ATM Ranges
 ATM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
@@ -25,9 +27,9 @@ ATM_RANGE = {
 }
 
 
-# ==============================
+# ===================================
 # STRIKE CLASSIFICATION
-# ==============================
+# ===================================
 def classify_strike(symbol, strike, option_type, future_price):
     atm_width = ATM_RANGE.get(symbol, 0)
 
@@ -36,15 +38,16 @@ def classify_strike(symbol, strike, option_type, future_price):
 
     if option_type == "CE":
         return "ITM" if strike < future_price else "OTM"
-    elif option_type == "PE":
+
+    if option_type == "PE":
         return "ITM" if strike > future_price else "OTM"
 
     return None
 
 
-# ==============================
+# ===================================
 # PARSE ALERT
-# ==============================
+# ===================================
 def parse_alert(text):
     symbol_match = re.search(r"Symbol:\s*([\w-]+)", text)
     lot_match = re.search(r"LOTS:\s*(\d+)", text)
@@ -65,12 +68,13 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
-    option_type = None
-    strike = None
-    zone = None
-
     # Extract strike and CE/PE
     opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
+
+    strike = None
+    option_type = None
+    zone = None
+
     if opt_match:
         strike = int(opt_match.group(1))
         option_type = opt_match.group(2)
@@ -111,20 +115,21 @@ def parse_alert(text):
     }
 
 
-# ==============================
+# ===================================
 # MESSAGE HANDLER
-# ==============================
+# ===================================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
+
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
         parsed = parse_alert(msg.text)
         if parsed:
             alerts_buffer.append(parsed)
 
 
-# ==============================
+# ===================================
 # PROCESS SUMMARY
-# ==============================
+# ===================================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
 
@@ -147,35 +152,56 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         else:
             data[symbol][action]["TOTAL"] += lots
 
-    message = "📊 5 MIN FLOW WITH STRIKE ZONE\n\n"
+    message = "<pre>\n"
+    message += "📊 5 MIN FLOW WITH STRIKE ZONE\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in data:
             continue
 
-        message += f"🔷 {symbol}\n\n"
+        message += f"{symbol}\n"
+        message += "-" * 60 + "\n"
+        message += f"{'TYPE':20}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
+        message += "-" * 60 + "\n"
 
-        for action in ["CALL_WRITER", "PUT_WRITER", "CALL_BUY", "PUT_BUY"]:
-            message += f"{action.replace('_',' ')}\n"
-            message += f"ITM : {data[symbol][action]['ITM']}\n"
-            message += f"ATM : {data[symbol][action]['ATM']}\n"
-            message += f"OTM : {data[symbol][action]['OTM']}\n\n"
+        for action in [
+            "CALL_WRITER",
+            "PUT_WRITER",
+            "CALL_BUY",
+            "PUT_BUY",
+            "SHORT_COVERING",
+            "LONG_UNWINDING"
+        ]:
+            itm = data[symbol][action]["ITM"]
+            atm = data[symbol][action]["ATM"]
+            otm = data[symbol][action]["OTM"]
+            total = itm + atm + otm
+
+            label = action.replace("_", " ")
+
+            message += f"{label:20}{itm:8}{atm:8}{otm:8}{total:10}\n"
 
         fb = data[symbol]["FUTURE_BUY"]["TOTAL"]
         fs = data[symbol]["FUTURE_SELL"]["TOTAL"]
 
-        message += f"FUTURE BUY  : {fb}\n"
-        message += f"FUTURE SELL : {fs}\n"
-        message += "\n---------------------------------\n\n"
+        message += "-" * 60 + "\n"
+        message += f"{'FUTURE BUY':20}{fb:8}\n"
+        message += f"{'FUTURE SELL':20}{fs:8}\n"
+        message += "\n\n"
 
-    message += "⏳ Validity: Next 5 Minutes Only"
+    message += "Validity: Next 5 Minutes Only\n"
+    message += "</pre>"
 
-    await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message)
+    await context.bot.send_message(
+        chat_id=SUMMARY_CHAT_ID,
+        text=message,
+        parse_mode="HTML"
+    )
 
 
-# ==============================
+# ===================================
 # MAIN
-# ==============================
+# ===================================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
