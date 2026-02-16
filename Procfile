@@ -1,1 +1,1 @@
-worker: python gfdl_scanner 5mint.py
+worker: python gfdl_scanner_5mint.py
