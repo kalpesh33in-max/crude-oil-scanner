@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
@@ -16,10 +16,12 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
-# Symbols to Track
+# ===============================
+# TRACK ONLY THESE SYMBOLS
+# ===============================
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# ATM Ranges
+# ATM Width Settings
 ATM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
@@ -27,9 +29,9 @@ ATM_RANGE = {
 }
 
 
-# ===================================
+# ===============================
 # STRIKE CLASSIFICATION
-# ===================================
+# ===============================
 def classify_strike(symbol, strike, option_type, future_price):
     atm_width = ATM_RANGE.get(symbol, 0)
 
@@ -45,9 +47,9 @@ def classify_strike(symbol, strike, option_type, future_price):
     return None
 
 
-# ===================================
-# PARSE ALERT
-# ===================================
+# ===============================
+# PARSE ALERT MESSAGE
+# ===============================
 def parse_alert(text):
     symbol_match = re.search(r"Symbol:\s*([\w-]+)", text)
     lot_match = re.search(r"LOTS:\s*(\d+)", text)
@@ -68,8 +70,8 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
+    # Extract strike + CE/PE
     opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
-
     strike = None
     option_type = None
     zone = None
@@ -84,7 +86,6 @@ def parse_alert(text):
         zone = classify_strike(base_symbol, strike, option_type, future_price)
 
     text_upper = text.upper()
-
     action_type = None
 
     if "CALL WRITER" in text_upper:
@@ -96,14 +97,14 @@ def parse_alert(text):
     elif "PUT BUY" in text_upper:
         action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        if "CE" in symbol_full:
+        if option_type == "CE":
             action_type = "CALL_SC"
-        elif "PE" in symbol_full:
+        elif option_type == "PE":
             action_type = "PUT_SC"
     elif "LONG UNWINDING" in text_upper:
-        if "CE" in symbol_full:
+        if option_type == "CE":
             action_type = "CALL_UNW"
-        elif "PE" in symbol_full:
+        elif option_type == "PE":
             action_type = "PUT_UNW"
     elif "FUTURE BUY" in text_upper:
         action_type = "FUTURE_BUY"
@@ -120,9 +121,9 @@ def parse_alert(text):
     }
 
 
-# ===================================
+# ===============================
 # MESSAGE HANDLER
-# ===================================
+# ===============================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
 
@@ -132,9 +133,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alerts_buffer.append(parsed)
 
 
-# ===================================
-# PROCESS SUMMARY
-# ===================================
+# ===============================
+# SUMMARY PROCESSOR
+# ===============================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
 
@@ -165,9 +166,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         message += f"{symbol}\n"
-        message += "-" * 60 + "\n"
-        message += f"{'TYPE':20}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
-        message += "-" * 60 + "\n"
+        message += "-" * 55 + "\n"
+        message += f"{'TYPE':15}{'ITM':>6}{'ATM':>6}{'OTM':>6}{'TOT':>6}\n"
+        message += "-" * 55 + "\n"
 
         for action in [
             "CALL_WRITER",
@@ -186,14 +187,14 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
             label = action.replace("_", " ")
 
-            message += f"{label:20}{itm:8}{atm:8}{otm:8}{total:10}\n"
+            message += f"{label:15}{itm:6}{atm:6}{otm:6}{total:6}\n"
 
         fb = data[symbol]["FUTURE_BUY"]["TOTAL"]
         fs = data[symbol]["FUTURE_SELL"]["TOTAL"]
 
-        message += "-" * 60 + "\n"
-        message += f"{'FUTURE BUY':20}{fb:8}\n"
-        message += f"{'FUTURE SELL':20}{fs:8}\n"
+        message += "-" * 55 + "\n"
+        message += f"{'FUT BUY':15}{fb:6}\n"
+        message += f"{'FUT SELL':15}{fs:6}\n"
         message += "\n\n"
 
     message += "Validity: Next 5 Minutes Only\n"
@@ -206,9 +207,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===================================
+# ===============================
 # MAIN
-# ===================================
+# ===============================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
