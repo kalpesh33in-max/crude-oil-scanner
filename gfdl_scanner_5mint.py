@@ -5,18 +5,10 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# ==============================
-# LOGGING
-# ==============================
-
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-
-# ==============================
-# ENV VARIABLES
-# ==============================
 
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
 TARGET_CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
@@ -24,88 +16,83 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
-# Track these base symbols
-TRACK_SYMBOLS = ["BANKNIFTY", "NIFTY", "FINNIFTY"]
+TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# ==============================
+# =========================
 # PARSE ALERT
-# ==============================
-
+# =========================
 def parse_alert(text):
 
-    if not text:
+    logging.info(f"Parsing text:\n{text}")
+
+    symbol_match = re.search(r"Symbol\s*:\s*([A-Za-z0-9]+)", text, re.IGNORECASE)
+    lot_match = re.search(r"LOTS\s*:\s*(\d+)", text, re.IGNORECASE)
+
+    if not symbol_match or not lot_match:
+        logging.info("Parsing failed - Symbol or LOTS not found")
         return None
 
-    text_upper = text.upper()
-
-    # Extract symbol
-    symbol_match = re.search(r"SYMBOL:\s*([A-Z0-9]+)", text_upper)
-    if not symbol_match:
-        return None
-
-    full_symbol = symbol_match.group(1)
-
-    # Extract lots
-    lot_match = re.search(r"LOTS:\s*(\d+)", text_upper)
-    if not lot_match:
-        return None
-
+    symbol_full = symbol_match.group(1).upper()
     lots = int(lot_match.group(1))
 
-    # Detect base symbol
     base_symbol = None
     for s in TRACK_SYMBOLS:
-        if s in full_symbol:
+        if s in symbol_full:
             base_symbol = s
             break
 
     if not base_symbol:
+        logging.info("Parsing failed - Base symbol not matched")
         return None
 
-    # Detect action type
+    text_upper = text.upper()
+
+    action_type = None
+
     if "CALL WRITER" in text_upper:
-        action = "CALL_WRITER"
+        action_type = "CALL_WRITER"
     elif "PUT WRITER" in text_upper:
-        action = "PUT_WRITER"
+        action_type = "PUT_WRITER"
     elif "CALL BUY" in text_upper:
-        action = "CALL_BUY"
+        action_type = "CALL_BUY"
     elif "PUT BUY" in text_upper:
-        action = "PUT_BUY"
+        action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        action = "SHORT_COVERING"
+        action_type = "SHORT_COVERING"
     elif "LONG UNWINDING" in text_upper:
-        action = "LONG_UNWINDING"
+        action_type = "LONG_UNWINDING"
     elif "FUTURE BUY" in text_upper:
-        action = "FUTURE_BUY"
+        action_type = "FUTURE_BUY"
     elif "FUTURE SELL" in text_upper:
-        action = "FUTURE_SELL"
+        action_type = "FUTURE_SELL"
     else:
+        logging.info("Parsing failed - Action not detected")
         return None
 
-    logging.info(f"Parsed: {base_symbol} | {action} | {lots}")
+    logging.info(f"Parsed Successfully: {base_symbol} | {action_type} | {lots}")
 
     return {
         "symbol": base_symbol,
-        "action": action,
-        "lots": lots
+        "lots": lots,
+        "action_type": action_type,
     }
 
 
-# ==============================
+# =========================
 # MESSAGE HANDLER
-# ==============================
-
+# =========================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = update.channel_post  # IMPORTANT: Only channel posts
+    msg = update.channel_post or update.message
 
-    if not msg:
+    if not msg or not msg.text:
         return
+
+    logging.info(f"Message received from chat id: {msg.chat.id}")
 
     if str(msg.chat.id) != str(TARGET_CHANNEL_ID):
+        logging.info("Message ignored - Not target channel")
         return
-
-    logging.info("Message received from target channel")
 
     parsed = parse_alert(msg.text)
 
@@ -116,25 +103,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info("Message not parsed")
 
 
-# ==============================
-# SUMMARY PROCESSOR
-# ==============================
-
+# =========================
+# PROCESS SUMMARY
+# =========================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
     global alerts_buffer
 
     if not alerts_buffer:
+        logging.info("No alerts in buffer")
         return
+
+    current_batch = list(alerts_buffer)
+    alerts_buffer.clear()
 
     data = defaultdict(lambda: defaultdict(int))
 
-    for alert in alerts_buffer:
-        data[alert["symbol"]][alert["action"]] += alert["lots"]
+    for alert in current_batch:
+        data[alert["symbol"]][alert["action_type"]] += alert["lots"]
 
-    alerts_buffer.clear()
-
-    message = "📊 5 MIN FLOW SUMMARY\n\n"
+    message = "📊 5 MIN FLOW BREAKDOWN\n\n"
 
     total_bull = 0
     total_bear = 0
@@ -155,36 +143,36 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         fb = data[symbol]["FUTURE_BUY"]
         fs = data[symbol]["FUTURE_SELL"]
 
-        message += f"CALL BUY        : {cb}\n"
-        message += f"PUT BUY         : {pb}\n"
-        message += f"CALL WRITER     : {cw}\n"
-        message += f"PUT WRITER      : {pw}\n"
-        message += f"FUTURE BUY      : {fb}\n"
-        message += f"FUTURE SELL     : {fs}\n"
-        message += "---------------------------\n\n"
+        message += f"CALL WRITER : {cw}\n"
+        message += f"PUT WRITER  : {pw}\n"
+        message += f"CALL BUY    : {cb}\n"
+        message += f"PUT BUY     : {pb}\n"
+        message += f"SHORT COV   : {sc}\n"
+        message += f"LONG UNWIND : {lu}\n"
+        message += f"FUTURE BUY  : {fb}\n"
+        message += f"FUTURE SELL : {fs}\n"
+        message += "-----------------------------\n\n"
 
-        bull = pb + cb + sc + fb
-        bear = cw + lu + fs
+        bull = pw + cb + sc + fb
+        bear = cw + pb + lu + fs
 
         total_bull += bull
         total_bear += bear
 
     net = total_bull - total_bear
 
-    message += "📈 NET VIEW\n"
-    message += f"Bullish Lots : {total_bull}\n"
-    message += f"Bearish Lots : {total_bear}\n"
-    message += f"Net          : {net}\n\n"
+    message += f"📈 Bullish Activity : {total_bull}\n"
+    message += f"📉 Bearish Activity : {total_bear}\n"
+    message += f"⚖ Net Dominance    : {net}\n\n"
 
     if net > 0:
-        bias = "🔥 Bullish Build-up"
+        message += "🔥 Bullish Build-up"
     elif net < 0:
-        bias = "🔻 Bearish Build-up"
+        message += "🔻 Bearish Build-up"
     else:
-        bias = "⚖ Neutral"
+        message += "⚪ Neutral"
 
-    message += f"Bias: {bias}\n"
-    message += "⏳ Validity: Next 5 Minutes"
+    logging.info("Sending summary message")
 
     await context.bot.send_message(
         chat_id=SUMMARY_CHAT_ID,
@@ -192,26 +180,19 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ==============================
+# =========================
 # MAIN
-# ==============================
-
+# =========================
 def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(
-        MessageHandler(filters.ALL, message_handler)
-    )
+    app.add_handler(MessageHandler(filters.TEXT, message_handler))
 
-    app.job_queue.run_repeating(
-        process_summary,
-        interval=300,
-        first=60
-    )
+    app.job_queue.run_repeating(process_summary, interval=300, first=10)
 
     logging.info("Starting bot...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
