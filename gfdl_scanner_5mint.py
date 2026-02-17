@@ -159,7 +159,8 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             data[symbol][action]["TOTAL"] += lots
 
     message = "<pre>\n"
-    message += "📊 5 MIN FLOW WITH CE/PE SPLIT\n\n"
+    # UPDATED LABEL
+    message += "📊 2 MIN FLOW WITH CE/PE SPLIT\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in data:
@@ -197,7 +198,8 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         message += f"{'FUT SELL':15}{fs:6}\n"
         message += "\n\n"
 
-    message += "Validity: Next 5 Minutes Only\n"
+    # UPDATED VALIDITY TEXT
+    message += "Validity: Next 2 Minutes Only\n"
     message += "</pre>"
 
     await context.bot.send_message(
@@ -216,7 +218,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
 
     if app.job_queue:
-        app.job_queue.run_repeating(process_summary, interval=300, first=10)
+        # CHANGED INTERVAL FROM 300 TO 120
+        app.job_queue.run_repeating(process_summary, interval=120, first=10)
 
     app.run_polling(drop_pending_updates=True)
 
