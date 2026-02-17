@@ -205,7 +205,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+    app.add_handler(MessageHandler(filters.ALL, message_handler))
 
     if app.job_queue:
         app.job_queue.run_repeating(process_summary, interval=300, first=10)
