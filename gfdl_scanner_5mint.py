@@ -16,12 +16,8 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
-# ===============================
-# TRACK ONLY THESE SYMBOLS
-# ===============================
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# ATM Width Settings
 ATM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
@@ -29,9 +25,9 @@ ATM_RANGE = {
 }
 
 
-# ===============================
+# ===================================
 # STRIKE CLASSIFICATION
-# ===============================
+# ===================================
 def classify_strike(symbol, strike, option_type, future_price):
     atm_width = ATM_RANGE.get(symbol, 0)
 
@@ -47,9 +43,9 @@ def classify_strike(symbol, strike, option_type, future_price):
     return None
 
 
-# ===============================
-# PARSE ALERT MESSAGE
-# ===============================
+# ===================================
+# PARSE ALERT
+# ===================================
 def parse_alert(text):
     symbol_match = re.search(r"Symbol:\s*([\w-]+)", text)
     lot_match = re.search(r"LOTS:\s*(\d+)", text)
@@ -70,8 +66,8 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
-    # Extract strike + CE/PE
     opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
+
     strike = None
     option_type = None
     zone = None
@@ -86,6 +82,7 @@ def parse_alert(text):
         zone = classify_strike(base_symbol, strike, option_type, future_price)
 
     text_upper = text.upper()
+
     action_type = None
 
     if "CALL WRITER" in text_upper:
@@ -97,15 +94,9 @@ def parse_alert(text):
     elif "PUT BUY" in text_upper:
         action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        if option_type == "CE":
-            action_type = "CALL_SC"
-        elif option_type == "PE":
-            action_type = "PUT_SC"
+        action_type = "SHORT_COVERING"
     elif "LONG UNWINDING" in text_upper:
-        if option_type == "CE":
-            action_type = "CALL_UNW"
-        elif option_type == "PE":
-            action_type = "PUT_UNW"
+        action_type = "LONG_UNWINDING"
     elif "FUTURE BUY" in text_upper:
         action_type = "FUTURE_BUY"
     elif "FUTURE SELL" in text_upper:
@@ -118,12 +109,13 @@ def parse_alert(text):
         "lots": lots,
         "action_type": action_type,
         "zone": zone,
+        "option_type": option_type
     }
 
 
-# ===============================
+# ===================================
 # MESSAGE HANDLER
-# ===============================
+# ===================================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
 
@@ -133,9 +125,35 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             alerts_buffer.append(parsed)
 
 
-# ===============================
-# SUMMARY PROCESSOR
-# ===============================
+# ===================================
+# SUGGESTION LOGIC
+# ===================================
+def generate_suggestion(data):
+    call_sc = data["CALL_SC"]
+    put_sc = data["PUT_SC"]
+    call_writer = data["CALL_WRITER"]
+    put_writer = data["PUT_WRITER"]
+    call_buy = data["CALL_BUY"]
+    put_buy = data["PUT_BUY"]
+
+    bullish_score = call_sc + put_writer + call_buy
+    bearish_score = put_sc + call_writer + put_buy
+
+    if bullish_score > bearish_score * 1.5:
+        return "✅ BUY CALL", "HIGH"
+    elif bearish_score > bullish_score * 1.5:
+        return "❌ BUY PUT", "HIGH"
+    elif bullish_score > bearish_score:
+        return "⚡ BUY CALL (Small)", "MEDIUM"
+    elif bearish_score > bullish_score:
+        return "⚡ BUY PUT (Small)", "MEDIUM"
+    else:
+        return "🚫 NO TRADE", "LOW"
+
+
+# ===================================
+# PROCESS SUMMARY
+# ===================================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
 
@@ -145,18 +163,27 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     current_batch = list(alerts_buffer)
     alerts_buffer.clear()
 
-    data = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+    data = defaultdict(lambda: defaultdict(int))
 
     for alert in current_batch:
         symbol = alert["symbol"]
         action = alert["action_type"]
-        zone = alert["zone"]
+        option_type = alert.get("option_type")
+
         lots = alert["lots"]
 
-        if zone:
-            data[symbol][action][zone] += lots
+        if action == "SHORT_COVERING":
+            if option_type == "CE":
+                data[symbol]["CALL_SC"] += lots
+            elif option_type == "PE":
+                data[symbol]["PUT_SC"] += lots
+        elif action == "LONG_UNWINDING":
+            if option_type == "CE":
+                data[symbol]["CALL_UNW"] += lots
+            elif option_type == "PE":
+                data[symbol]["PUT_UNW"] += lots
         else:
-            data[symbol][action]["TOTAL"] += lots
+            data[symbol][action] += lots
 
     message = "<pre>\n"
     message += "📊 5 MIN FLOW WITH CE/PE SPLIT\n\n"
@@ -165,37 +192,31 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         if symbol not in data:
             continue
 
+        d = data[symbol]
+
         message += f"{symbol}\n"
         message += "-" * 55 + "\n"
-        message += f"{'TYPE':15}{'ITM':>6}{'ATM':>6}{'OTM':>6}{'TOT':>6}\n"
+        message += f"{'TYPE':15}{'TOT':>8}\n"
         message += "-" * 55 + "\n"
 
-        for action in [
-            "CALL_WRITER",
-            "PUT_WRITER",
-            "CALL_BUY",
-            "PUT_BUY",
-            "CALL_SC",
-            "PUT_SC",
-            "CALL_UNW",
-            "PUT_UNW",
+        for key in [
+            "CALL_WRITER", "PUT_WRITER",
+            "CALL_BUY", "PUT_BUY",
+            "CALL_SC", "PUT_SC",
+            "CALL_UNW", "PUT_UNW"
         ]:
-            itm = data[symbol][action]["ITM"]
-            atm = data[symbol][action]["ATM"]
-            otm = data[symbol][action]["OTM"]
-            total = itm + atm + otm
-
-            label = action.replace("_", " ")
-
-            message += f"{label:15}{itm:6}{atm:6}{otm:6}{total:6}\n"
-
-        fb = data[symbol]["FUTURE_BUY"]["TOTAL"]
-        fs = data[symbol]["FUTURE_SELL"]["TOTAL"]
+            message += f"{key.replace('_',' '):15}{d[key]:>8}\n"
 
         message += "-" * 55 + "\n"
-        message += f"{'FUT BUY':15}{fb:6}\n"
-        message += f"{'FUT SELL':15}{fs:6}\n"
-        message += "\n\n"
+        message += f"{'FUT BUY':15}{d['FUTURE_BUY']:>8}\n"
+        message += f"{'FUT SELL':15}{d['FUTURE_SELL']:>8}\n"
+
+        suggestion, confidence = generate_suggestion(d)
+
+        message += "\n"
+        message += f"🎯 SUGGESTION: {suggestion}\n"
+        message += f"Confidence: {confidence}\n"
+        message += "-" * 55 + "\n\n"
 
     message += "Validity: Next 5 Minutes Only\n"
     message += "</pre>"
@@ -207,9 +228,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===============================
+# ===================================
 # MAIN
-# ===============================
+# ===================================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
