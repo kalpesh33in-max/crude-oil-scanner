@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
@@ -25,9 +25,9 @@ ATM_RANGE = {
 }
 
 
-# ==============================
+# ===================================
 # STRIKE CLASSIFICATION
-# ==============================
+# ===================================
 def classify_strike(symbol, strike, option_type, future_price):
     atm_width = ATM_RANGE.get(symbol, 0)
 
@@ -43,9 +43,9 @@ def classify_strike(symbol, strike, option_type, future_price):
     return None
 
 
-# ==============================
+# ===================================
 # PARSE ALERT
-# ==============================
+# ===================================
 def parse_alert(text):
     symbol_match = re.search(r"Symbol:\s*([\w-]+)", text)
     lot_match = re.search(r"LOTS:\s*(\d+)", text)
@@ -82,25 +82,38 @@ def parse_alert(text):
         zone = classify_strike(base_symbol, strike, option_type, future_price)
 
     text_upper = text.upper()
-
-    action_map = {
-        "CALL WRITER": "CALL_WRITER",
-        "PUT WRITER": "PUT_WRITER",
-        "CALL BUY": "CALL_BUY",
-        "PUT BUY": "PUT_BUY",
-        "SHORT COVERING": "SHORT_COVERING",
-        "LONG UNWINDING": "LONG_UNWINDING",
-        "FUTURE BUY": "FUTURE_BUY",
-        "FUTURE SELL": "FUTURE_SELL",
-    }
-
     action_type = None
-    for key in action_map:
-        if key in text_upper:
-            action_type = action_map[key]
-            break
 
-    if not action_type:
+    # BUY / WRITER
+    if "CALL WRITER" in text_upper:
+        action_type = "CALL_WRITER"
+    elif "PUT WRITER" in text_upper:
+        action_type = "PUT_WRITER"
+    elif "CALL BUY" in text_upper:
+        action_type = "CALL_BUY"
+    elif "PUT BUY" in text_upper:
+        action_type = "PUT_BUY"
+
+    # SHORT COVERING
+    elif "SHORT COVERING" in text_upper:
+        if option_type == "CE":
+            action_type = "CALL_SHORT_COVERING"
+        elif option_type == "PE":
+            action_type = "PUT_SHORT_COVERING"
+
+    # LONG UNWINDING
+    elif "LONG UNWINDING" in text_upper:
+        if option_type == "CE":
+            action_type = "CALL_LONG_UNWINDING"
+        elif option_type == "PE":
+            action_type = "PUT_LONG_UNWINDING"
+
+    # FUTURES
+    elif "FUTURE BUY" in text_upper:
+        action_type = "FUTURE_BUY"
+    elif "FUTURE SELL" in text_upper:
+        action_type = "FUTURE_SELL"
+    else:
         return None
 
     return {
@@ -111,21 +124,9 @@ def parse_alert(text):
     }
 
 
-# ==============================
-# MESSAGE HANDLER
-# ==============================
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.channel_post or update.message
-
-    if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
-        parsed = parse_alert(msg.text)
-        if parsed:
-            alerts_buffer.append(parsed)
-
-
-# ==============================
+# ===================================
 # PROCESS SUMMARY
-# ==============================
+# ===================================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
 
@@ -149,64 +150,45 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             data[symbol][action]["TOTAL"] += lots
 
     message = "<pre>\n"
-    message += "📊 5 MIN FLOW WITH STRIKE ZONE\n\n"
+    message += "📊 5 MIN FLOW WITH CE/PE SPLIT\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in data:
             continue
 
         message += f"{symbol}\n"
-        message += "-" * 60 + "\n"
-        message += f"{'TYPE':20}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
-        message += "-" * 60 + "\n"
+        message += "-" * 70 + "\n"
+        message += f"{'TYPE':25}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
+        message += "-" * 70 + "\n"
 
-        total_bull = 0
-        total_bear = 0
-
-        for action in [
+        action_list = [
             "CALL_WRITER",
             "PUT_WRITER",
             "CALL_BUY",
             "PUT_BUY",
-            "SHORT_COVERING",
-            "LONG_UNWINDING"
-        ]:
+            "CALL_SHORT_COVERING",
+            "PUT_SHORT_COVERING",
+            "CALL_LONG_UNWINDING",
+            "PUT_LONG_UNWINDING",
+        ]
+
+        for action in action_list:
             itm = data[symbol][action]["ITM"]
             atm = data[symbol][action]["ATM"]
             otm = data[symbol][action]["OTM"]
             total = itm + atm + otm
 
             label = action.replace("_", " ")
-            message += f"{label:20}{itm:8}{atm:8}{otm:8}{total:10}\n"
 
-            # Basic classification
-            if action in ["PUT_BUY", "CALL_BUY", "SHORT_COVERING"]:
-                total_bull += total
-            if action in ["CALL_WRITER", "PUT_WRITER", "LONG_UNWINDING"]:
-                total_bear += total
+            message += f"{label:25}{itm:8}{atm:8}{otm:8}{total:10}\n"
 
         fb = data[symbol]["FUTURE_BUY"]["TOTAL"]
         fs = data[symbol]["FUTURE_SELL"]["TOTAL"]
 
-        total_bull += fb
-        total_bear += fs
-
-        message += "-" * 60 + "\n"
-        message += f"{'FUTURE BUY':20}{fb:8}\n"
-        message += f"{'FUTURE SELL':20}{fs:8}\n"
-
-        net = total_bull - total_bear
-
-        if net > 0:
-            bias = "🔥 BULLISH BUILDUP"
-        elif net < 0:
-            bias = "🔻 BEARISH BUILDUP"
-        else:
-            bias = "⚖️ NEUTRAL"
-
-        message += "-" * 60 + "\n"
-        message += f"Net Flow: {net}\n"
-        message += f"Bias: {bias}\n\n\n"
+        message += "-" * 70 + "\n"
+        message += f"{'FUTURE BUY':25}{fb:8}\n"
+        message += f"{'FUTURE SELL':25}{fs:8}\n"
+        message += "\n\n"
 
     message += "Validity: Next 5 Minutes Only\n"
     message += "</pre>"
@@ -218,9 +200,21 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ==============================
+# ===================================
+# MESSAGE HANDLER
+# ===================================
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.channel_post or update.message
+
+    if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
+        parsed = parse_alert(msg.text)
+        if parsed:
+            alerts_buffer.append(parsed)
+
+
+# ===================================
 # MAIN
-# ==============================
+# ===================================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
