@@ -16,8 +16,10 @@ SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
 
 alerts_buffer = []
 
+# Symbols to Track
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
+# ATM Ranges
 ATM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
@@ -82,9 +84,9 @@ def parse_alert(text):
         zone = classify_strike(base_symbol, strike, option_type, future_price)
 
     text_upper = text.upper()
+
     action_type = None
 
-    # BUY / WRITER
     if "CALL WRITER" in text_upper:
         action_type = "CALL_WRITER"
     elif "PUT WRITER" in text_upper:
@@ -93,22 +95,16 @@ def parse_alert(text):
         action_type = "CALL_BUY"
     elif "PUT BUY" in text_upper:
         action_type = "PUT_BUY"
-
-    # SHORT COVERING
     elif "SHORT COVERING" in text_upper:
-        if option_type == "CE":
-            action_type = "CALL_SHORT_COVERING"
-        elif option_type == "PE":
-            action_type = "PUT_SHORT_COVERING"
-
-    # LONG UNWINDING
+        if "CE" in symbol_full:
+            action_type = "CALL_SC"
+        elif "PE" in symbol_full:
+            action_type = "PUT_SC"
     elif "LONG UNWINDING" in text_upper:
-        if option_type == "CE":
-            action_type = "CALL_LONG_UNWINDING"
-        elif option_type == "PE":
-            action_type = "PUT_LONG_UNWINDING"
-
-    # FUTURES
+        if "CE" in symbol_full:
+            action_type = "CALL_UNW"
+        elif "PE" in symbol_full:
+            action_type = "PUT_UNW"
     elif "FUTURE BUY" in text_upper:
         action_type = "FUTURE_BUY"
     elif "FUTURE SELL" in text_upper:
@@ -122,6 +118,18 @@ def parse_alert(text):
         "action_type": action_type,
         "zone": zone,
     }
+
+
+# ===================================
+# MESSAGE HANDLER
+# ===================================
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.channel_post or update.message
+
+    if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
+        parsed = parse_alert(msg.text)
+        if parsed:
+            alerts_buffer.append(parsed)
 
 
 # ===================================
@@ -157,22 +165,20 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         message += f"{symbol}\n"
-        message += "-" * 70 + "\n"
-        message += f"{'TYPE':25}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
-        message += "-" * 70 + "\n"
+        message += "-" * 60 + "\n"
+        message += f"{'TYPE':20}{'ITM':>8}{'ATM':>8}{'OTM':>8}{'TOTAL':>10}\n"
+        message += "-" * 60 + "\n"
 
-        action_list = [
+        for action in [
             "CALL_WRITER",
             "PUT_WRITER",
             "CALL_BUY",
             "PUT_BUY",
-            "CALL_SHORT_COVERING",
-            "PUT_SHORT_COVERING",
-            "CALL_LONG_UNWINDING",
-            "PUT_LONG_UNWINDING",
-        ]
-
-        for action in action_list:
+            "CALL_SC",
+            "PUT_SC",
+            "CALL_UNW",
+            "PUT_UNW",
+        ]:
             itm = data[symbol][action]["ITM"]
             atm = data[symbol][action]["ATM"]
             otm = data[symbol][action]["OTM"]
@@ -180,14 +186,14 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
             label = action.replace("_", " ")
 
-            message += f"{label:25}{itm:8}{atm:8}{otm:8}{total:10}\n"
+            message += f"{label:20}{itm:8}{atm:8}{otm:8}{total:10}\n"
 
         fb = data[symbol]["FUTURE_BUY"]["TOTAL"]
         fs = data[symbol]["FUTURE_SELL"]["TOTAL"]
 
-        message += "-" * 70 + "\n"
-        message += f"{'FUTURE BUY':25}{fb:8}\n"
-        message += f"{'FUTURE SELL':25}{fs:8}\n"
+        message += "-" * 60 + "\n"
+        message += f"{'FUTURE BUY':20}{fb:8}\n"
+        message += f"{'FUTURE SELL':20}{fs:8}\n"
         message += "\n\n"
 
     message += "Validity: Next 5 Minutes Only\n"
@@ -198,18 +204,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         text=message,
         parse_mode="HTML"
     )
-
-
-# ===================================
-# MESSAGE HANDLER
-# ===================================
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.channel_post or update.message
-
-    if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
-        parsed = parse_alert(msg.text)
-        if parsed:
-            alerts_buffer.append(parsed)
 
 
 # ===================================
