@@ -26,7 +26,7 @@ alerts_buffer = []
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
 # ==============================
-# PARSE ALERT
+# PARSE ALERT FUNCTION
 # ==============================
 def parse_alert(text):
 
@@ -86,6 +86,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
+    logging.info(f"Incoming message from chat_id: {msg.chat_id}")
+
     if str(msg.chat_id) != str(TARGET_CHANNEL_ID):
         return
 
@@ -99,7 +101,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.info(f"Parsed alert added: {parsed}")
 
 # ==============================
-# PROCESS SUMMARY (5 MIN)
+# PROCESS SUMMARY (Every 5 Min)
 # ==============================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
@@ -184,18 +186,21 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # IMPORTANT FIX — capture channel posts
+    # Capture ALL updates including channel posts
     app.add_handler(MessageHandler(filters.ALL, message_handler))
 
-    # 5 minute scheduler
+    # Run every 5 minutes
     if app.job_queue:
         app.job_queue.run_repeating(
             process_summary,
             interval=300,
-            first=10
+            first=15
         )
 
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES
+    )
 
 if __name__ == "__main__":
     main()
