@@ -47,8 +47,10 @@ def parse_alert(text):
     price = float(prc_m.group(1)) if prc_m else 0
     oi = abs(int(oi_m.group(1).replace(",",""))) if oi_m else 0
     
+    # Update future price if alert is a FUT alert
     if "FUT" in raw_sym: last_future_prices[base_sym] = price
 
+    # Categorization
     act = "OTHER"
     if "CALL WRITER" in t: act = "CALL_WRITER"
     elif "PUT WRITER" in t: act = "PUT_WRITER"
@@ -59,15 +61,21 @@ def parse_alert(text):
     elif "FUTURE BUY" in t: act = "FUT_BUY"
     elif "FUTURE SELL" in t: act = "FUT_SELL"
 
+    # Zone Classification
     zone = "TOTAL"
     strike_m = re.search(r"(\d{4,6})", raw_sym)
     if strike_m and last_future_prices[base_sym] > 0:
         opt_type = "CE" if "CE" in raw_sym else "PE" if "PE" in raw_sym else None
         if opt_type: zone = classify_strike(base_sym, int(strike_m.group(1)), opt_type, last_future_prices[base_sym])
 
-    # Standardizing value calculation for net analysis
     val = (oi * price) if "FUT" not in act else (lots * 100000)
     return {"sym": base_sym, "act": act, "lots": lots, "val": val, "zone": zone}
+
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.channel_post or update.message
+    if msg and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
+        p = parse_alert(msg.text)
+        if p: alerts_buffer.append(p)
 
 async def send_flow_report(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
@@ -79,9 +87,9 @@ async def send_flow_report(context: ContextTypes.DEFAULT_TYPE):
         data[a['sym']][a['act']][a['zone']] += a['lots']
         data[a['sym']][a['act']]["VAL"] += a['val']
 
-    # Header matches "2 MIN FLOW REPORT" from photo
-    msg = "<b>✅ 2 MIN FLOW REPORT</b>\n\n<pre>"
-    total_bull_v = total_bear_v = 0
+    # Using HTML/Pre for table alignment like in your photo
+    msg = "<b>📊 2 MIN FLOW REPORT</b>\n\n<pre>"
+    total_bull_v = total_bear_v = total_bull_l = total_bear_l = 0
 
     for sym in TRACK_SYMBOLS:
         if sym not in data: continue
@@ -90,7 +98,6 @@ async def send_flow_report(context: ContextTypes.DEFAULT_TYPE):
         msg += f"{'TYPE':14} {'ITM':>5} {'OTM':>5} {'TOT':>5}\n"
         msg += "-" * 32 + "\n"
         
-        # Displaying only Option types; ATM is removed as requested
         acts = ["CALL_WRITER", "PUT_WRITER", "CALL_BUY", "PUT_BUY", "CALL_SC", "PUT_SC"]
         for a in acts:
             itm, otm = data[sym][a]["ITM"], data[sym][a]["OTM"]
@@ -98,21 +105,15 @@ async def send_flow_report(context: ContextTypes.DEFAULT_TYPE):
             msg += f"{a.replace('_',' '):14} {itm:5} {otm:5} {tot:5}\n"
         
         msg += "-" * 32 + "\n"
-        # Displaying only core Future Buy/Sell (SC/UW removed from output)
         msg += f"{'FUT BUY':14} {data[sym]['FUT_BUY']['TOTAL']:>17}\n"
         msg += f"{'FUT SELL':14} {data[sym]['FUT_SELL']['TOTAL']:>17}\n\n"
 
-        # Math logic for Total Summary (Bullish vs Bearish)
-        # Bullish: Put Writing + Call Buying + Future Buying + Call SC
-        b_v = data[sym]['PUT_WRITER']['VAL'] + data[sym]['CALL_BUY']['VAL'] + \
-              data[sym]['FUT_BUY']['VAL'] + data[sym]['CALL_SC']['VAL']
-        # Bearish: Call Writing + Put Buying + Future Selling + Put SC
-        r_v = data[sym]['CALL_WRITER']['VAL'] + data[sym]['PUT_BUY']['VAL'] + \
-              data[sym]['FUT_SELL']['VAL'] + data[sym]['PUT_SC']['VAL']
-        
-        total_bull_v += b_v
-        total_bear_v += r_v
+        # Math for Summary Logic
+        b_v = data[sym]['PUT_WRITER']['VAL'] + data[sym]['CALL_BUY']['VAL'] + data[sym]['FUT_BUY']['VAL']
+        r_v = data[sym]['CALL_WRITER']['VAL'] + data[sym]['PUT_BUY']['VAL'] + data[sym]['FUT_SELL']['VAL']
+        total_bull_v += b_v; total_bear_v += r_v
 
+    # Bottom Logic from your Photo
     net_v = total_bull_v - total_bear_v
     bias = "🚀 BULLISH" if net_v > 0 else "📉 BEARISH" if net_v < 0 else "⚖️ NEUTRAL"
     
