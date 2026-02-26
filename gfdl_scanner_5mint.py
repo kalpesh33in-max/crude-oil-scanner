@@ -18,7 +18,7 @@ alerts_buffer = []
 
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# ✅ Correct Lot Sizes
+# ✅ Updated Lot Sizes
 LOT_SIZES = {
     "BANKNIFTY": 30,
     "HDFCBANK": 550,
@@ -37,7 +37,7 @@ def format_money(value):
         return f"{value:.0f}"
 
 # ===============================
-# ITM / OTM CLASSIFICATION
+# ITM / OTM LOGIC
 # ===============================
 def classify_strike(strike, option_type, future_price):
     strike = float(strike)
@@ -73,7 +73,7 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
-    # ✅ SAFE STRIKE EXTRACTION
+    # Safe Strike Extraction
     opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
 
     zone = None
@@ -81,11 +81,11 @@ def parse_alert(text):
 
     if opt_match and future_price:
         raw_digits = opt_match.group(1)
-        strike = raw_digits[-5:]  # Take last 5 digits only
+        strike = raw_digits[-5:]
         option_type = opt_match.group(2)
         zone = classify_strike(strike, option_type, future_price)
 
-    # ✅ ROBUST ACTION DETECTION
+    # Robust Action Detection
     action_type = None
 
     if "WRITER" in text_upper:
@@ -171,6 +171,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
         if zone:
             data[sym][act][zone] += lots
+
             if price:
                 turn = lots * price * lot_size
                 turnover_zone[sym][act][zone] += turn
@@ -195,10 +196,10 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         message += f"{'TYPE':10}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
         message += "-" * 60 + "\n"
 
-        itm_total_lots = 0
-        otm_total_lots = 0
-        itm_total_turn = 0
-        otm_total_turn = 0
+        itm_total = 0
+        otm_total = 0
+        itm_turn = 0
+        otm_turn = 0
 
         for action in data[symbol]:
 
@@ -207,10 +208,10 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             itm_t = turnover_zone[symbol][action]["ITM"]
             otm_t = turnover_zone[symbol][action]["OTM"]
 
-            itm_total_lots += itm_l
-            otm_total_lots += otm_l
-            itm_total_turn += itm_t
-            otm_total_turn += otm_t
+            itm_total += itm_l
+            otm_total += otm_l
+            itm_turn += itm_t
+            otm_turn += otm_t
 
             tot_l = itm_l + otm_l
             tot_t = itm_t + otm_t
@@ -220,17 +221,32 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                        f"{(str(otm_l)+'('+format_money(otm_t)+')'):>14}" \
                        f"{(str(tot_l)+'('+format_money(tot_t)+')'):>14}\n"
 
-        grand_lots = itm_total_lots + otm_total_lots
-        grand_turn = itm_total_turn + otm_total_turn
-
         message += "-" * 60 + "\n"
-        message += f"{'ITM TOTAL':10}{(str(itm_total_lots)+'('+format_money(itm_total_turn)+')'):>14}\n"
-        message += f"{'OTM TOTAL':10}{(str(otm_total_lots)+'('+format_money(otm_total_turn)+')'):>14}\n"
-        message += f"{'GRAND TOTAL':10}{(str(grand_lots)+'('+format_money(grand_turn)+')'):>14}\n\n"
+        message += f"{'ITM TOTAL':10}{(str(itm_total)+'('+format_money(itm_turn)+')'):>14}\n"
+        message += f"{'OTM TOTAL':10}{(str(otm_total)+'('+format_money(otm_turn)+')'):>14}\n"
+        message += f"{'GRAND TOTAL':10}{(str(itm_total+otm_total)+'('+format_money(itm_turn+otm_turn)+')'):>14}\n\n"
 
+    # ===============================
+    # BIAS CALCULATION
+    # ===============================
     net_lots = total_bull - total_bear
     total_flow = total_bull + total_bear
     dominance = (total_bull / total_flow * 100) if total_flow else 0
+
+    if net_lots > 500:
+        bias = "🔥 VERY STRONG BULLISH"
+    elif net_lots > 200:
+        bias = "🚀 STRONG BULLISH"
+    elif net_lots > 0:
+        bias = "🟢 Mild Bullish"
+    elif net_lots < -500:
+        bias = "🔥 VERY STRONG BEARISH"
+    elif net_lots < -200:
+        bias = "📉 STRONG BEARISH"
+    elif net_lots < 0:
+        bias = "🔴 Mild Bearish"
+    else:
+        bias = "⚖ Neutral"
 
     message += "=" * 60 + "\n"
     message += "📈 NET DIRECTIONAL LOT FLOW\n"
@@ -241,7 +257,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     message += f"Bullish Dominance  : {dominance:.1f}%\n\n"
     message += f"Total Turnover     : {format_money(total_turnover)}\n"
     message += f"Bullish Turnover   : {format_money(bull_turnover)}\n"
-    message += f"Bearish Turnover   : {format_money(bear_turnover)}\n"
+    message += f"Bearish Turnover   : {format_money(bear_turnover)}\n\n"
+    message += f"Bias               : {bias}\n"
+    message += "Validity           : Next 2 Minutes Only\n"
     message += "</pre>"
 
     await context.bot.send_message(
