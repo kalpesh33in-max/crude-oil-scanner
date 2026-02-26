@@ -18,10 +18,11 @@ alerts_buffer = []
 
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
+# ✅ UPDATED LOT SIZES
 LOT_SIZES = {
-    "BANKNIFTY": 15,
+    "BANKNIFTY": 30,
     "HDFCBANK": 550,
-    "ICICIBANK": 1375
+    "ICICIBANK": 700
 }
 
 # ===============================
@@ -185,9 +186,14 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         message += f"{symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
-        message += "-" * 70 + "\n"
-        message += f"{'TYPE':12}{'ITM':>18}{'OTM':>18}{'TOTAL':>18}\n"
-        message += "-" * 70 + "\n"
+        message += "-" * 66 + "\n"
+        message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
+        message += "-" * 66 + "\n"
+
+        itm_total_lots = 0
+        otm_total_lots = 0
+        itm_total_turn = 0
+        otm_total_turn = 0
 
         actions = [
             "CALL_WRITER","PUT_WRITER",
@@ -200,30 +206,38 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
             itm_l = data[symbol][action]["ITM"]
             otm_l = data[symbol][action]["OTM"]
-
             itm_t = turnover_zone[symbol][action]["ITM"]
             otm_t = turnover_zone[symbol][action]["OTM"]
+
+            itm_total_lots += itm_l
+            otm_total_lots += otm_l
+            itm_total_turn += itm_t
+            otm_total_turn += otm_t
 
             tot_l = itm_l + otm_l
             tot_t = itm_t + otm_t
 
-            message += f"{action.replace('_',' '):12}" \
-                       f"{(str(itm_l)+'('+format_money(itm_t)+')'):>18}" \
-                       f"{(str(otm_l)+'('+format_money(otm_t)+')'):>18}" \
-                       f"{(str(tot_l)+'('+format_money(tot_t)+')'):>18}\n"
+            message += f"{action[:10]:10}" \
+                       f"{(str(itm_l)+'('+format_money(itm_t)+')'):>15}" \
+                       f"{(str(otm_l)+'('+format_money(otm_t)+')'):>15}" \
+                       f"{(str(tot_l)+'('+format_money(tot_t)+')'):>15}\n"
 
-        message += "-" * 70 + "\n"
+        grand_lots = itm_total_lots + otm_total_lots
+        grand_turn = itm_total_turn + otm_total_turn
+
+        message += "-" * 66 + "\n"
+        message += f"{'ITM TOTAL':10}{(str(itm_total_lots)+'('+format_money(itm_total_turn)+')'):>15}\n"
+        message += f"{'OTM TOTAL':10}{(str(otm_total_lots)+'('+format_money(otm_total_turn)+')'):>15}\n"
+        message += f"{'GRAND TOTAL':10}{(str(grand_lots)+'('+format_money(grand_turn)+')'):>15}\n\n"
 
         for f_act in ["FUTURE_BUY","FUTURE_SELL"]:
             lots = futures_data[symbol][f_act]
             turn = futures_turnover[symbol][f_act]
-            message += f"{f_act.replace('_',' '):12}" \
-                       f"{(str(lots)+'('+format_money(turn)+')'):>18}\n"
+            message += f"{f_act[:10]:10}{(str(lots)+'('+format_money(turn)+')'):>15}\n"
 
         message += "\n"
 
-    # ================= NET FLOW CALC =================
-
+    # ================= NET FLOW =================
     for symbol in TRACK_SYMBOLS:
         for action in data[symbol]:
             total_lots = data[symbol][action]["ITM"] + data[symbol][action]["OTM"]
@@ -255,9 +269,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     else:
         strength = "⚖️ Balanced"
 
-    message += "=" * 70 + "\n"
+    message += "=" * 66 + "\n"
     message += "📈 NET DIRECTIONAL LOT FLOW (All Symbols)\n"
-    message += "=" * 70 + "\n\n"
+    message += "=" * 66 + "\n\n"
     message += f"Total Bullish Lots : {total_bull}\n"
     message += f"Total Bearish Lots : {total_bear}\n"
     message += f"Net Lot Flow       : {net_lots}\n"
