@@ -22,22 +22,29 @@ alerts_buffer = []
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
 # ===============================
-# 🔄 REVERSED ITM LOGIC
+# ✅ REAL OPTION ITM LOGIC
 # ===============================
 def classify_strike(strike, option_type, future_price):
+    """
+    CALL (CE):
+        ITM -> Strike < Future
+        OTM -> Strike > Future
 
+    PUT (PE):
+        ITM -> Strike > Future
+        OTM -> Strike < Future
+    """
     try:
-        strike = int(float(strike))
-        future_price = int(float(future_price))
+        strike = float(strike)
+        future_price = float(future_price)
     except:
         return None
 
-    # Reversed logic (as per your confirmation)
     if option_type == "CE":
-        return "ITM" if strike > future_price else "OTM"
+        return "ITM" if strike < future_price else "OTM"
 
     if option_type == "PE":
-        return "ITM" if strike < future_price else "OTM"
+        return "ITM" if strike > future_price else "OTM"
 
     return None
 
@@ -74,7 +81,6 @@ def parse_alert(text):
         option_type = opt_match.group(2)
         zone = classify_strike(strike, option_type, future_price)
 
-    # Action Mapping
     action_type = None
 
     if "CALL WRITER" in text_upper:
@@ -86,13 +92,17 @@ def parse_alert(text):
     elif "PUT BUY" in text_upper:
         action_type = "PUT_BUY"
     elif "SHORT COVERING" in text_upper:
-        if opt_match:
-            action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
+        if option_type == "CE":
+            action_type = "CALL_SC"
+        elif option_type == "PE":
+            action_type = "PUT_SC"
         else:
             action_type = "FUTURE_SC"
     elif "LONG UNWINDING" in text_upper:
-        if opt_match:
-            action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
+        if option_type == "CE":
+            action_type = "CALL_UNW"
+        elif option_type == "PE":
+            action_type = "PUT_UNW"
         else:
             action_type = "FUTURE_UNW"
     elif "FUTURE BUY" in text_upper:
@@ -168,9 +178,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         message += f"{symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
-        message += "-" * 60 + "\n"
-        message += f"{'TYPE':14}{'ITM':>10}{'OTM':>10}{'TOT':>10}\n"
-        message += "-" * 60 + "\n"
+        message += "-" * 50 + "\n"
+        message += f"{'TYPE':12}{'ITM':>6}{'OTM':>6}{'TOT':>6}\n"
+        message += "-" * 50 + "\n"
 
         actions = [
             "CALL_WRITER","PUT_WRITER",
@@ -180,26 +190,23 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         ]
 
         for action in actions:
-
             itm = data[symbol][action]["ITM"]
             otm = data[symbol][action]["OTM"]
             total = itm + otm
+            message += f"{action.replace('_',' '):12}{itm:6}{otm:6}{total:6}\n"
 
-            message += f"{action.replace('_',' '):14}{itm:10}{otm:10}{total:10}\n"
-
-        message += "-" * 60 + "\n"
+        message += "-" * 50 + "\n"
 
         fb = futures_data[symbol]["FUTURE_BUY"]
         fs = futures_data[symbol]["FUTURE_SELL"]
         fsc = futures_data[symbol]["FUTURE_SC"]
         funw = futures_data[symbol]["FUTURE_UNW"]
 
-        message += f"{'FUT BUY':14}{fb:10}\n"
-        message += f"{'FUT SELL':14}{fs:10}\n"
-        message += f"{'FUT SC':14}{fsc:10}\n"
-        message += f"{'FUT UNW':14}{funw:10}\n\n"
+        message += f"{'FUT BUY':12}{fb:6}\n"
+        message += f"{'FUT SELL':12}{fs:6}\n"
+        message += f"{'FUT SC':12}{fsc:6}\n"
+        message += f"{'FUT UNW':12}{funw:6}\n\n"
 
-        # Bullish Lots
         bull = (
             data[symbol]["PUT_WRITER"]["ITM"] + data[symbol]["PUT_WRITER"]["OTM"] +
             data[symbol]["CALL_BUY"]["ITM"] + data[symbol]["CALL_BUY"]["OTM"] +
@@ -208,7 +215,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             fb + fsc
         )
 
-        # Bearish Lots
         bear = (
             data[symbol]["CALL_WRITER"]["ITM"] + data[symbol]["CALL_WRITER"]["OTM"] +
             data[symbol]["PUT_BUY"]["ITM"] + data[symbol]["PUT_BUY"]["OTM"] +
@@ -239,15 +245,15 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     else:
         strength = "⚖️ Balanced"
 
-    message += "=" * 60 + "\n"
-    message += "📈 NET DIRECTIONAL LOT FLOW (All Symbols)\n"
-    message += "=" * 60 + "\n\n"
-    message += f"Total Bullish Lots : {total_bull}\n"
-    message += f"Total Bearish Lots : {total_bear}\n"
-    message += f"Net Lot Flow       : {net_lots}\n"
-    message += f"Bullish Dominance  : {dominance:.1f}%\n\n"
-    message += f"Bias               : {strength}\n\n"
-    message += "Validity: Next 2 Minutes Only\n"
+    message += "=" * 50 + "\n"
+    message += "📈 NET DIRECTIONAL LOT FLOW\n"
+    message += "=" * 50 + "\n"
+    message += f"Bullish Lots : {total_bull}\n"
+    message += f"Bearish Lots : {total_bear}\n"
+    message += f"Net Lot Flow : {net_lots}\n"
+    message += f"Bullish %    : {dominance:.1f}%\n\n"
+    message += f"Bias         : {strength}\n"
+    message += "Validity     : Next 2 Minutes Only\n"
     message += "</pre>"
 
     await context.bot.send_message(
@@ -257,11 +263,16 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ===============================
+# MAIN
+# ===============================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
+
     if app.job_queue:
         app.job_queue.run_repeating(process_summary, interval=120, first=10)
+
     app.run_polling(drop_pending_updates=True)
 
 
