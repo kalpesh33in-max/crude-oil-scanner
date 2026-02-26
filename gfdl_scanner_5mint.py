@@ -18,7 +18,7 @@ alerts_buffer = []
 
 TRACK_SYMBOLS = ["BANKNIFTY", "HDFCBANK", "ICICIBANK"]
 
-# ✅ UPDATED LOT SIZES
+# ✅ Correct Lot Sizes
 LOT_SIZES = {
     "BANKNIFTY": 30,
     "HDFCBANK": 550,
@@ -26,7 +26,7 @@ LOT_SIZES = {
 }
 
 # ===============================
-# FORMAT MONEY
+# MONEY FORMAT
 # ===============================
 def format_money(value):
     if value >= 1e7:
@@ -37,20 +37,16 @@ def format_money(value):
         return f"{value:.0f}"
 
 # ===============================
-# REAL ITM LOGIC
+# ITM / OTM CLASSIFICATION
 # ===============================
 def classify_strike(strike, option_type, future_price):
-    try:
-        strike = float(strike)
-        future_price = float(future_price)
-    except:
-        return None
+    strike = float(strike)
+    future_price = float(future_price)
 
     if option_type == "CE":
         return "ITM" if strike < future_price else "OTM"
-    if option_type == "PE":
+    elif option_type == "PE":
         return "ITM" if strike > future_price else "OTM"
-
     return None
 
 # ===============================
@@ -60,7 +56,7 @@ def parse_alert(text):
 
     text_upper = text.upper()
 
-    symbol_match = re.search(r"SYMBOL:\s*([\w-]+)", text_upper)
+    symbol_match = re.search(r"SYMBOL:\s*([\w]+)", text_upper)
     lot_match = re.search(r"LOTS:\s*(\d+)", text_upper)
     price_match = re.search(r"PRICE:\s*([\d.]+)", text_upper)
     future_match = re.search(r"FUTURE\s+PRICE:\s*([\d.]+)", text_upper)
@@ -77,32 +73,42 @@ def parse_alert(text):
     if not base_symbol:
         return None
 
-    opt_match = re.search(r"(\d+)(CE|PE)", symbol_full)
+    # ✅ SAFE STRIKE EXTRACTION
+    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
 
     zone = None
     option_type = None
 
     if opt_match and future_price:
-        strike = opt_match.group(1)
+        raw_digits = opt_match.group(1)
+        strike = raw_digits[-5:]  # Take last 5 digits only
         option_type = opt_match.group(2)
         zone = classify_strike(strike, option_type, future_price)
 
+    # ✅ ROBUST ACTION DETECTION
     action_type = None
 
-    if "CALL WRITER" in text_upper:
-        action_type = "CALL_WRITER"
-    elif "PUT WRITER" in text_upper:
-        action_type = "PUT_WRITER"
+    if "WRITER" in text_upper:
+        if option_type == "CE":
+            action_type = "CALL_WRITER"
+        elif option_type == "PE":
+            action_type = "PUT_WRITER"
+
     elif "CALL BUY" in text_upper:
         action_type = "CALL_BUY"
+
     elif "PUT BUY" in text_upper:
         action_type = "PUT_BUY"
+
     elif "SHORT COVERING" in text_upper:
         action_type = "CALL_SC" if option_type == "CE" else "PUT_SC"
+
     elif "LONG UNWINDING" in text_upper:
         action_type = "CALL_UNW" if option_type == "CE" else "PUT_UNW"
+
     elif "FUTURE BUY" in text_upper:
         action_type = "FUTURE_BUY"
+
     elif "FUTURE SELL" in text_upper:
         action_type = "FUTURE_SELL"
 
@@ -143,8 +149,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
 
     data = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
     turnover_zone = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
-    futures_data = defaultdict(lambda: defaultdict(int))
-    futures_turnover = defaultdict(lambda: defaultdict(float))
     last_future = {}
 
     total_bull = 0
@@ -171,38 +175,32 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 turn = lots * price * lot_size
                 turnover_zone[sym][act][zone] += turn
                 total_turnover += turn
-        else:
-            futures_data[sym][act] += lots
-            if alert["future"]:
-                turn = lots * alert["future"] * lot_size
-                futures_turnover[sym][act] += turn
-                total_turnover += turn
+
+                if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]:
+                    total_bull += lots
+                    bull_turnover += turn
+                else:
+                    total_bear += lots
+                    bear_turnover += turn
 
     message = "<pre>\n📊 2 MIN LOT FLOW REPORT\n\n"
 
     for symbol in TRACK_SYMBOLS:
 
-        if symbol not in data and symbol not in futures_data:
+        if symbol not in data:
             continue
 
         message += f"{symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
-        message += "-" * 66 + "\n"
-        message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
-        message += "-" * 66 + "\n"
+        message += "-" * 60 + "\n"
+        message += f"{'TYPE':10}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
+        message += "-" * 60 + "\n"
 
         itm_total_lots = 0
         otm_total_lots = 0
         itm_total_turn = 0
         otm_total_turn = 0
 
-        actions = [
-            "CALL_WRITER","PUT_WRITER",
-            "CALL_BUY","PUT_BUY",
-            "CALL_SC","PUT_SC",
-            "CALL_UNW","PUT_UNW"
-        ]
-
-        for action in actions:
+        for action in data[symbol]:
 
             itm_l = data[symbol][action]["ITM"]
             otm_l = data[symbol][action]["OTM"]
@@ -218,69 +216,32 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             tot_t = itm_t + otm_t
 
             message += f"{action[:10]:10}" \
-                       f"{(str(itm_l)+'('+format_money(itm_t)+')'):>15}" \
-                       f"{(str(otm_l)+'('+format_money(otm_t)+')'):>15}" \
-                       f"{(str(tot_l)+'('+format_money(tot_t)+')'):>15}\n"
+                       f"{(str(itm_l)+'('+format_money(itm_t)+')'):>14}" \
+                       f"{(str(otm_l)+'('+format_money(otm_t)+')'):>14}" \
+                       f"{(str(tot_l)+'('+format_money(tot_t)+')'):>14}\n"
 
         grand_lots = itm_total_lots + otm_total_lots
         grand_turn = itm_total_turn + otm_total_turn
 
-        message += "-" * 66 + "\n"
-        message += f"{'ITM TOTAL':10}{(str(itm_total_lots)+'('+format_money(itm_total_turn)+')'):>15}\n"
-        message += f"{'OTM TOTAL':10}{(str(otm_total_lots)+'('+format_money(otm_total_turn)+')'):>15}\n"
-        message += f"{'GRAND TOTAL':10}{(str(grand_lots)+'('+format_money(grand_turn)+')'):>15}\n\n"
-
-        for f_act in ["FUTURE_BUY","FUTURE_SELL"]:
-            lots = futures_data[symbol][f_act]
-            turn = futures_turnover[symbol][f_act]
-            message += f"{f_act[:10]:10}{(str(lots)+'('+format_money(turn)+')'):>15}\n"
-
-        message += "\n"
-
-    # ================= NET FLOW =================
-    for symbol in TRACK_SYMBOLS:
-        for action in data[symbol]:
-            total_lots = data[symbol][action]["ITM"] + data[symbol][action]["OTM"]
-            total_turn = turnover_zone[symbol][action]["ITM"] + turnover_zone[symbol][action]["OTM"]
-
-            if action in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]:
-                total_bull += total_lots
-                bull_turnover += total_turn
-            elif action in ["CALL_WRITER","PUT_BUY","PUT_SC","CALL_UNW"]:
-                total_bear += total_lots
-                bear_turnover += total_turn
+        message += "-" * 60 + "\n"
+        message += f"{'ITM TOTAL':10}{(str(itm_total_lots)+'('+format_money(itm_total_turn)+')'):>14}\n"
+        message += f"{'OTM TOTAL':10}{(str(otm_total_lots)+'('+format_money(otm_total_turn)+')'):>14}\n"
+        message += f"{'GRAND TOTAL':10}{(str(grand_lots)+'('+format_money(grand_turn)+')'):>14}\n\n"
 
     net_lots = total_bull - total_bear
     total_flow = total_bull + total_bear
-    dominance = (total_bull / total_flow * 100) if total_flow > 0 else 0
+    dominance = (total_bull / total_flow * 100) if total_flow else 0
 
-    if net_lots > 500:
-        strength = "🔥 VERY STRONG BULLISH"
-    elif net_lots > 200:
-        strength = "🚀 STRONG BULLISH"
-    elif net_lots > 0:
-        strength = "🟢 Mild Bullish"
-    elif net_lots < -500:
-        strength = "🔥 VERY STRONG BEARISH"
-    elif net_lots < -200:
-        strength = "📉 STRONG BEARISH"
-    elif net_lots < 0:
-        strength = "🔴 Mild Bearish"
-    else:
-        strength = "⚖️ Balanced"
-
-    message += "=" * 66 + "\n"
-    message += "📈 NET DIRECTIONAL LOT FLOW (All Symbols)\n"
-    message += "=" * 66 + "\n\n"
+    message += "=" * 60 + "\n"
+    message += "📈 NET DIRECTIONAL LOT FLOW\n"
+    message += "=" * 60 + "\n"
     message += f"Total Bullish Lots : {total_bull}\n"
     message += f"Total Bearish Lots : {total_bear}\n"
     message += f"Net Lot Flow       : {net_lots}\n"
     message += f"Bullish Dominance  : {dominance:.1f}%\n\n"
     message += f"Total Turnover     : {format_money(total_turnover)}\n"
     message += f"Bullish Turnover   : {format_money(bull_turnover)}\n"
-    message += f"Bearish Turnover   : {format_money(bear_turnover)}\n\n"
-    message += f"Bias               : {strength}\n"
-    message += "Validity           : Next 2 Minutes Only\n"
+    message += f"Bearish Turnover   : {format_money(bear_turnover)}\n"
     message += "</pre>"
 
     await context.bot.send_message(
