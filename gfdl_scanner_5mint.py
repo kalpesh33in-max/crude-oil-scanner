@@ -171,14 +171,19 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             message += "--- OPTIONS FLOW ---\n"
             message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
             message += "-" * 55 + "\n"
-            s_bull_lots, s_bear_lots, s_turnover = 0, 0, 0
+            s_bull_lots, s_bear_lots = 0, 0
+            s_bull_turnover, s_bear_turnover = 0, 0
             for act in opt_data[symbol]:
                 itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
                 itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
                 tot_l, tot_t = itm_l + otm_l, itm_t + otm_t
-                s_turnover += tot_t
-                if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: s_bull_lots += tot_l
-                else: s_bear_lots += tot_l
+                
+                if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: 
+                    s_bull_lots += tot_l
+                    s_bull_turnover += tot_t
+                else: 
+                    s_bear_lots += tot_l
+                    s_bear_turnover += tot_t
                 
                 itm_str = f"{itm_l}({format_money(itm_t)})"
                 otm_str = f"{otm_l}({format_money(otm_t)})"
@@ -188,22 +193,28 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             opt_net = s_bull_lots - s_bear_lots
             message += "-" * 55 + "\n"
             message += f"Option Bias: {get_bias_label(opt_net)}\n"
-            message += f"Option Turn: {format_money(s_turnover)}\n\n"
+            message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
+            message += f"Bearish Turn: {format_money(s_bear_turnover)}\n\n"
 
         if symbol in fut_data:
             message += "--- FUTURES FLOW ---\n"
-            f_bull_lots, f_bear_lots, f_turnover = 0, 0, 0
+            f_bull_lots, f_bear_lots = 0, 0
+            f_bull_turnover, f_bear_turnover = 0, 0
             for act in fut_data[symbol]:
                 lots = fut_data[symbol][act]
                 turn = fut_turn[symbol][act]
-                f_turnover += turn
-                if act in ["FUTURE_BUY", "FUTURE_SC"]: f_bull_lots += lots
-                else: f_bear_lots += lots
+                if act in ["FUTURE_BUY", "FUTURE_SC"]: 
+                    f_bull_lots += lots
+                    f_bull_turnover += turn
+                else: 
+                    f_bear_lots += lots
+                    f_bear_turnover += turn
                 message += f"{act:12} : {lots} lots ({format_money(turn)})\n"
             
             fut_net = f_bull_lots - f_bear_lots
             message += f"Future Bias: {get_bias_label(fut_net)}\n"
-            message += f"Future Turn: {format_money(f_turnover)}\n"
+            message += f"Bullish Turn: {format_money(f_bull_turnover)}\n"
+            message += f"Bearish Turn: {format_money(f_bear_turnover)}\n"
         
         message += "=" * 55 + "\n\n"
 
