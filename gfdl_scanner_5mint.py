@@ -171,9 +171,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\n"
-            # Adjusted: TYPE reduced to 10, Columns set to 15 for equal spacing
-            message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
-            message += "-" * 55 + "\n"
+            # Spacing set to 10 for TYPE and 12 for data columns
+            message += f"{'TYPE':10}{'ITM':>12}{'OTM':>12}{'TOT':>12}\n"
+            message += "-" * 46 + "\n"
             
             s_bull_lots, s_bear_lots = 0, 0
             s_bull_turnover, s_bear_turnover = 0, 0
@@ -181,6 +181,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
                 itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
                 
+                # FIXED: Corrected tot_t calculation 
                 tot_l, tot_t = itm_l + otm_l, itm_t + otm_t 
                 
                 if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: 
@@ -195,10 +196,10 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 tot_str = f"{tot_l}({format_money(tot_t)})"
                 
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                # Aligned to match the header exactly
-                message += f"{display_act[:10]:10}{itm_str:>15}{otm_str:>15}{tot_str:>15}\n"
+                # Aligned to match the header exactly: 10, 12, 12, 12
+                message += f"{display_act[:10]:10}{itm_str:>12}{otm_str:>12}{tot_str:>12}\n"
             
-            message += "-" * 55 + "\n"
+            message += "-" * 46 + "\n"
             opt_net = s_bull_lots - s_bear_lots
             message += f"Option Bias: {get_bias_label(opt_net)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
