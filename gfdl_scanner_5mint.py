@@ -177,7 +177,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
             for act in opt_data[symbol]:
                 itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
                 itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
-                tot_l, tot_t = itm_l + otm_l, itm_t + tot_t
+                
+                # FIXED: Changed tot_t calculation to use otm_t instead of tot_t
+                tot_l, tot_t = itm_l + otm_l, itm_t + otm_t 
                 
                 if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: 
                     s_bull_lots += tot_l
