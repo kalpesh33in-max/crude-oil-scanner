@@ -6,13 +6,13 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# Logging setup 
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 
-# Environment Variables 
+# Environment Variables
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
 TARGET_CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
 SUMMARY_CHAT_ID = os.getenv("SUMMARY_CHAT_ID")
@@ -30,7 +30,7 @@ LOT_SIZES = {
 }
 
 # ===============================
-# MONEY FORMAT 
+# MONEY FORMAT
 # ===============================
 def format_money(value):
     if value >= 1e7:
@@ -41,7 +41,7 @@ def format_money(value):
         return f"{value:.0f}"
 
 # ===============================
-# ITM / OTM LOGIC 
+# ITM / OTM LOGIC
 # ===============================
 def classify_strike(strike, option_type, future_price):
     try:
@@ -55,7 +55,7 @@ def classify_strike(strike, option_type, future_price):
     return None
 
 # ===============================
-# BIAS LOGIC 
+# BIAS LOGIC
 # ===============================
 def get_bias_label(net_lots):
     if net_lots > 500: return "🔥 VERY STRONG BULLISH"
@@ -67,7 +67,7 @@ def get_bias_label(net_lots):
     else: return "⚖ Neutral"
 
 # ===============================
-# PARSE ALERT 
+# PARSE ALERT
 # ===============================
 def parse_alert(text):
     text_upper = text.upper()
@@ -122,7 +122,7 @@ def parse_alert(text):
     }
 
 # ===============================
-# TELEGRAM HANDLER 
+# TELEGRAM HANDLER
 # ===============================
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
@@ -131,7 +131,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if parsed: alerts_buffer.append(parsed)
 
 # ===============================
-# SUMMARY PROCESS 
+# SUMMARY PROCESS
 # ===============================
 async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     global alerts_buffer
@@ -171,9 +171,9 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
         
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\n"
-            # Spacing increased to 15 for better separation 
-            message += f"{'TYPE':12}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
-            message += "-" * 57 + "\n"
+            # Adjusted: TYPE reduced to 10, Columns set to 15 for equal spacing
+            message += f"{'TYPE':10}{'ITM':>15}{'OTM':>15}{'TOT':>15}\n"
+            message += "-" * 55 + "\n"
             
             s_bull_lots, s_bear_lots = 0, 0
             s_bull_turnover, s_bear_turnover = 0, 0
@@ -181,7 +181,6 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 itm_l, otm_l = opt_data[symbol][act]["ITM"], opt_data[symbol][act]["OTM"]
                 itm_t, otm_t = opt_turn[symbol][act]["ITM"], opt_turn[symbol][act]["OTM"]
                 
-                # FIXED: Corrected tot_t calculation 
                 tot_l, tot_t = itm_l + otm_l, itm_t + otm_t 
                 
                 if act in ["PUT_WRITER","CALL_BUY","CALL_SC","PUT_UNW"]: 
@@ -196,10 +195,10 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
                 tot_str = f"{tot_l}({format_money(tot_t)})"
                 
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                # Applied >15 spacing to match header 
-                message += f"{display_act[:12]:12}{itm_str:>15}{otm_str:>15}{tot_str:>15}\n"
+                # Aligned to match the header exactly
+                message += f"{display_act[:10]:10}{itm_str:>15}{otm_str:>15}{tot_str:>15}\n"
             
-            message += "-" * 57 + "\n"
+            message += "-" * 55 + "\n"
             opt_net = s_bull_lots - s_bear_lots
             message += f"Option Bias: {get_bias_label(opt_net)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
@@ -231,7 +230,7 @@ async def process_summary(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=SUMMARY_CHAT_ID, text=message, parse_mode="HTML")
 
 # ===============================
-# MAIN 
+# MAIN
 # ===============================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
