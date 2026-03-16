@@ -5,9 +5,6 @@ from collections import defaultdict
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# ==============================
-# LOGGING
-# ==============================
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -29,71 +26,73 @@ LOT_SIZES = {
     "SBIN":750
 }
 
-# ==============================
+# ===============================
 # MONEY FORMAT
-# ==============================
-def format_money(v):
+# ===============================
+def format_money(value):
 
-    if v >= 1e7:
-        return f"{v/1e7:.2f}Cr"
+    if value >= 1e7:
+        return f"{value/1e7:.2f}Cr"
 
-    if v >= 1e5:
-        return f"{v/1e5:.2f}L"
+    elif value >= 1e5:
+        return f"{value/1e5:.2f}L"
 
-    return f"{v:.0f}"
+    return f"{value:.0f}"
 
-# ==============================
-# ITM / OTM
-# ==============================
-def classify_strike(strike,opt,fut):
+
+# ===============================
+# ITM / OTM LOGIC
+# ===============================
+def classify_strike(strike, option_type, future_price):
 
     strike=float(strike)
-    fut=float(fut)
+    future_price=float(future_price)
 
-    if opt=="CE":
-        return "ITM" if strike < fut else "OTM"
+    if option_type=="CE":
+        return "ITM" if strike < future_price else "OTM"
 
-    if opt=="PE":
-        return "ITM" if strike > fut else "OTM"
+    if option_type=="PE":
+        return "ITM" if strike > future_price else "OTM"
 
-    return None
 
-# ==============================
-# BIAS
-# ==============================
-def get_bias_label(net):
+# ===============================
+# BIAS LOGIC
+# ===============================
+def get_bias_label(net_lots):
 
-    if net > 500:
+    if net_lots > 500:
         return "🔥 VERY STRONG BULLISH"
 
-    if net >150:
+    elif net_lots > 150:
         return "🚀 STRONG BULLISH"
 
-    if net>0:
+    elif net_lots > 0:
         return "🟢 Mild Bullish"
 
-    if net<-500:
+    elif net_lots < -500:
         return "🔥 VERY STRONG BEARISH"
 
-    if net<-150:
+    elif net_lots < -150:
         return "📉 STRONG BEARISH"
 
-    if net<0:
+    elif net_lots < 0:
         return "🔴 Mild Bearish"
 
-    return "⚖ Neutral"
+    else:
+        return "⚖ Neutral"
 
-# ==============================
-# PARSER
-# ==============================
+
+# ===============================
+# PARSE ALERT
+# ===============================
 def parse_alert(text):
 
-    t=text.upper()
+    text=text.upper()
 
-    symbol_match=re.search(r"SYMBOL:\s*([\w-]+)",t)
-    lot_match=re.search(r"LOTS:\s*(\d+)",t)
-    price_match=re.search(r"PRICE:\s*([\d.]+)",t)
-    fut_match=re.search(r"FUTURE:\s*([\d.]+)",t)
+    symbol_match=re.search(r"SYMBOL:\s*([\w-]+)",text)
+    lot_match=re.search(r"LOTS:\s*(\d+)",text)
+    price_match=re.search(r"PRICE:\s*([\d.]+)",text)
+    future_match=re.search(r"FUTURE:\s*([\d.]+)",text)
 
     if not(symbol_match and lot_match):
         return None
@@ -101,11 +100,11 @@ def parse_alert(text):
     symbol_full=symbol_match.group(1)
     lots=int(lot_match.group(1))
     price=float(price_match.group(1)) if price_match else None
-    fut=float(fut_match.group(1)) if fut_match else None
+    future_price=float(future_match.group(1)) if future_match else None
 
-    base=next((s for s in TRACK_SYMBOLS if s in symbol_full),None)
+    base_symbol=next((s for s in TRACK_SYMBOLS if s in symbol_full),None)
 
-    if not base:
+    if not base_symbol:
         return None
 
     opt_match=re.search(
@@ -114,64 +113,65 @@ def parse_alert(text):
     )
 
     zone=None
-    opt=None
+    option_type=None
 
-    if opt_match and fut:
+    if opt_match and future_price:
 
         strike=opt_match.group(3)
-        opt=opt_match.group(4)
+        option_type=opt_match.group(4)
 
-        zone=classify_strike(strike,opt,fut)
+        zone=classify_strike(strike,option_type,future_price)
 
-    act=None
+    action=None
 
-    if "PUT WRITER" in t:
-        act="PUT_WR"
+    if "PUT WRITER" in text:
+        action="PUT_WR"
 
-    elif "CALL WRITER" in t:
-        act="CALL_WR"
+    elif "CALL WRITER" in text:
+        action="CALL_WR"
 
-    elif "SHORT COVERING" in t:
+    elif "SHORT COVERING" in text:
 
-        if opt=="CE":
-            act="CALL_SC"
+        if option_type=="CE":
+            action="CALL_SC"
         else:
-            act="PUT_SC"
+            action="PUT_SC"
 
-    elif "LONG UNWINDING" in t:
+    elif "LONG UNWINDING" in text:
 
-        if opt=="CE":
-            act="CALL_UNW"
+        if option_type=="CE":
+            action="CALL_UNW"
         else:
-            act="PUT_UNW"
+            action="PUT_UNW"
 
-    elif "CALL BUY" in t:
-        act="CALL_BUY"
+    elif "CALL BUY" in text:
+        action="CALL_BUY"
 
-    elif "PUT BUY" in t:
-        act="PUT_BUY"
+    elif "PUT BUY" in text:
+        action="PUT_BUY"
 
-    elif "FUTURE BUY" in t:
-        act="FUTURE_BUY"
+    elif "FUTURE BUY" in text:
+        action="FUTURE_BUY"
 
-    elif "FUTURE SELL" in t:
-        act="FUTURE_SELL"
+    elif "FUTURE SELL" in text:
+        action="FUTURE_SELL"
 
-    if not act:
+    if not action:
         return None
 
     return {
-        "symbol":base,
+        "symbol":base_symbol,
         "lots":lots,
         "zone":zone,
-        "act":act,
-        "price":price,
-        "future":fut
+        "action":action,
+        "future":future_price,
+        "price":price
     }
 
-# ==============================
+
+# ===============================
 # TELEGRAM HANDLER
-# ==============================
+# ===============================
 async def message_handler(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     msg=update.channel_post or update.message
@@ -183,9 +183,10 @@ async def message_handler(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if parsed:
             alerts_buffer.append(parsed)
 
-# ==============================
-# SUMMARY
-# ==============================
+
+# ===============================
+# SUMMARY PROCESS
+# ===============================
 async def process_summary(context:ContextTypes.DEFAULT_TYPE):
 
     global alerts_buffer
@@ -204,60 +205,69 @@ async def process_summary(context:ContextTypes.DEFAULT_TYPE):
 
     last_future={}
 
-    for a in batch:
+    for alert in batch:
 
-        sym=a["symbol"]
-        act=a["act"]
-        zone=a["zone"]
-        lots=a["lots"]
-        price=a["price"]
+        sym=alert["symbol"]
+        act=alert["action"]
+        zone=alert["zone"]
+        lots=alert["lots"]
+        price=alert["price"]
 
         lot_size=LOT_SIZES.get(sym,1)
 
-        if a["future"]:
-            last_future[sym]=a["future"]
+        if alert["future"]:
+            last_future[sym]=alert["future"]
 
         if zone:
 
             opt_data[sym][act][zone]+=lots
 
-            if price:
-                opt_turn[sym][act][zone]+=lots*price*lot_size
+            if "WR" in act or "_SC" in act:
+
+                multiplier=125000
+                opt_turn[sym][act][zone]+=lots*multiplier
+
+            else:
+
+                if price:
+                    opt_turn[sym][act][zone]+=lots*price*lot_size
 
         else:
 
             fut_data[sym][act]+=lots
             fut_turn[sym][act]+=lots*175000
 
-    msg="<pre>\n📊 2 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
-    for sym in TRACK_SYMBOLS:
+    message="<pre>\n📊 2 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
-        if sym not in opt_data and sym not in fut_data:
+    for symbol in TRACK_SYMBOLS:
+
+        if symbol not in opt_data and symbol not in fut_data:
             continue
 
-        msg+=f"💎 {sym} (FUT: {last_future.get(sym,'N/A')})\n"
+        message+=f"💎 {symbol} (FUT: {last_future.get(symbol,'N/A')})\n"
 
-        # OPTIONS
-        if sym in opt_data:
 
-            msg+="--- OPTIONS FLOW ---\n"
+        # OPTIONS FLOW
+        if symbol in opt_data:
 
-            msg+=f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
-            msg+="-""*"*49+"\n"
+            message+="--- OPTIONS FLOW ---\n"
 
-            bull=0
-            bear=0
-            bull_turn=0
-            bear_turn=0
+            message+=f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
+            message+="-"*49+"\n"
 
-            for act in opt_data[sym]:
+            s_bull=0
+            s_bear=0
+            s_bull_turn=0
+            s_bear_turn=0
 
-                itm_l=opt_data[sym][act]["ITM"]
-                otm_l=opt_data[sym][act]["OTM"]
+            for act in opt_data[symbol]:
 
-                itm_t=opt_turn[sym][act]["ITM"]
-                otm_t=opt_turn[sym][act]["OTM"]
+                itm_l=opt_data[symbol][act]["ITM"]
+                otm_l=opt_data[symbol][act]["OTM"]
+
+                itm_t=opt_turn[symbol][act]["ITM"]
+                otm_t=opt_turn[symbol][act]["OTM"]
 
                 tot_l=itm_l+otm_l
                 tot_t=itm_t+otm_t
@@ -266,65 +276,86 @@ async def process_summary(context:ContextTypes.DEFAULT_TYPE):
                 otm_str=f"{otm_l}({format_money(otm_t)})"
                 tot_str=f"{tot_l}({format_money(tot_t)})"
 
-                msg+=f"{act:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
+                message+=f"{act:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
 
                 if act in ["PUT_WR","CALL_BUY","CALL_SC","PUT_UNW"]:
-                    bull+=tot_l
-                    bull_turn+=tot_t
+                    s_bull+=tot_l
+                    s_bull_turn+=tot_t
                 else:
-                    bear+=tot_l
-                    bear_turn+=tot_t
+                    s_bear+=tot_l
+                    s_bear_turn+=tot_t
 
-            msg+="-""*"*49+"\n"
+            message+="-"*49+"\n"
 
-            net=bull-bear
+            net=s_bull-s_bear
 
-            msg+=f"Option Bias: {get_bias_label(net)}\n"
-            msg+=f"Bullish Turn: {format_money(bull_turn)}\n"
-            msg+=f"Bearish Turn: {format_money(bear_turn)}\n\n"
+            message+=f"Option Bias: {get_bias_label(net)}\n"
+            message+=f"Bullish Turn: {format_money(s_bull_turn)}\n"
+            message+=f"Bearish Turn: {format_money(s_bear_turn)}\n\n"
 
-        # FUTURES
-        if sym in fut_data:
 
-            msg+="---- FUTURES FLOW ----\n"
+        # FUTURES FLOW
+        if symbol in fut_data:
 
-            bull=0
-            bear=0
-            bull_turn=0
-            bear_turn=0
+            message+="--- FUTURES FLOW ---\n"
 
-            for act in fut_data[sym]:
+            message+=f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
+            message+="-"*49+"\n"
 
-                lots=fut_data[sym][act]
-                turn=fut_turn[sym][act]
+            f_bull=0
+            f_bear=0
+            f_bull_turn=0
+            f_bear_turn=0
 
-                msg+=f"{act:10} : {lots}({format_money(turn)})\n"
+            for act in fut_data[symbol]:
 
-                if act in ["FUTURE_BUY"]:
-                    bull+=lots
-                    bull_turn+=turn
+                lots=fut_data[symbol][act]
+                turn=fut_turn[symbol][act]
+
+                itm_l=lots
+                otm_l=0
+
+                itm_t=turn
+                otm_t=0
+
+                tot_l=lots
+                tot_t=turn
+
+                itm_str=f"{itm_l}({format_money(itm_t)})"
+                otm_str=f"{otm_l}(0)"
+                tot_str=f"{tot_l}({format_money(tot_t)})"
+
+                message+=f"{act:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
+
+                if act in ["FUTURE_BUY","FUTURE_SC"]:
+                    f_bull+=lots
+                    f_bull_turn+=turn
                 else:
-                    bear+=lots
-                    bear_turn+=turn
+                    f_bear+=lots
+                    f_bear_turn+=turn
 
-            msg+=f"Future Bias: {get_bias_label(bull-bear)}\n"
-            msg+=f"Bullish Turn: {format_money(bull_turn)}\n"
-            msg+=f"Bearish Turn: {format_money(bear_turn)}\n"
+            message+="-"*49+"\n"
 
-        msg+="="*49+"\n\n"
+            message+=f"Future Bias: {get_bias_label(f_bull-f_bear)}\n"
+            message+=f"Bullish Turn: {format_money(f_bull_turn)}\n"
+            message+=f"Bearish Turn: {format_money(f_bear_turn)}\n"
 
-    msg+="Validity: Next 2 Minutes\n"
-    msg+="</pre>"
+        message+="="*49+"\n\n"
+
+
+    message+="Validity: Next 2 Minutes\n"
+    message+="</pre>"
 
     await context.bot.send_message(
         chat_id=SUMMARY_CHAT_ID,
-        text=msg,
+        text=message,
         parse_mode="HTML"
     )
 
-# ==============================
+
+# ===============================
 # MAIN
-# ==============================
+# ===============================
 def main():
 
     app=Application.builder().token(BOT_TOKEN).build()
@@ -334,9 +365,15 @@ def main():
     )
 
     if app.job_queue:
-        app.job_queue.run_repeating(process_summary,interval=60,first=10)
+
+        app.job_queue.run_repeating(
+            process_summary,
+            interval=60,
+            first=10
+        )
 
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__=="__main__":
     main()
