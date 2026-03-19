@@ -1,1 +1,1 @@
-worker: python unified_flow_scanner.py
+worker: python unified-institutional-scanner/unified_flow_scanner.py
