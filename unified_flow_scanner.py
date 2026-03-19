@@ -142,7 +142,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buffer_5min.append(parsed)
 
 # ===============================
-# 2-MINUTE SUMMARY PROCESS (ITM/OTM Logic)
+# 2-MINUTE SUMMARY PROCESS (1 MIN INTERVAL)
 # ===============================
 async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
     global buffer_2min
@@ -165,6 +165,7 @@ async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
         if zone: # Option
             opt_data[sym][act][zone] += lots
             if "WRITER" in act or "_SC" in act:
+                # 2 MIN LOGIC: Use 125k multiplier for Writers/SC
                 multiplier = 125000
                 opt_turn[sym][act][zone] += (lots * multiplier)
             else:
@@ -173,7 +174,7 @@ async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
-    message = "<pre>\n📊 2 MIN INSTITUTIONAL FLOW REPORT (Unified)\n\n"
+    message = "<pre>\n📊 2 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in opt_data and symbol not in fut_data: continue
@@ -239,7 +240,7 @@ async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=SUMMARY_2MIN_CHAT_ID, text=message, parse_mode="HTML")
 
 # ===============================
-# 5-MINUTE SUMMARY PROCESS (Real Turnover Logic)
+# 5-MINUTE SUMMARY PROCESS (1 MIN INTERVAL)
 # ===============================
 async def process_5min_summary(context: ContextTypes.DEFAULT_TYPE):
     global buffer_5min
@@ -261,14 +262,14 @@ async def process_5min_summary(context: ContextTypes.DEFAULT_TYPE):
 
         if zone: # Option
             opt_data[sym][act][zone] += lots
-            # Real turnover: lots * price * lot_size
+            # 5 MIN LOGIC: Real turnover (lots * price * lot_size) for ALL types
             if price: 
                 opt_turn[sym][act][zone] += (lots * price * lot_size)
         else: # Future
             fut_data[sym][act] += lots
             fut_turn[sym][act] += (lots * 175000)
 
-    message = "<pre>\n📊 5 MIN INSTITUTIONAL FLOW REPORT (Unified)\n\n"
+    message = "<pre>\n📊 5 MIN INSTITUTIONAL FLOW REPORT\n\n"
 
     for symbol in TRACK_SYMBOLS:
         if symbol not in opt_data and symbol not in fut_data: continue
@@ -347,12 +348,11 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
     
     if app.job_queue:
-        # Run 2-min summary (every 120 seconds)
-        app.job_queue.run_repeating(process_2min_summary, interval=120, first=10)
-        # Run 5-min summary (every 300 seconds)
-        app.job_queue.run_repeating(process_5min_summary, interval=300, first=15)
+        # BOTH now run every 60 seconds (1 minute)
+        app.job_queue.run_repeating(process_2min_summary, interval=60, first=10)
+        app.job_queue.run_repeating(process_5min_summary, interval=60, first=15)
         
-    print("Unified Flow Scanner is running...")
+    print("Unified Flow Scanner is running (1-min intervals)...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
