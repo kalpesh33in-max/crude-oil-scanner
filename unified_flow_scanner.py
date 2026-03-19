@@ -43,9 +43,9 @@ LOT_SIZES = {
 # ===============================
 def format_money(value):
     if value >= 1e7:
-        return f"{value/1e7:.2f}Cr"
+        return f"{value/1e7:.1f}Cr"
     elif value >= 1e5:
-        return f"{value/1e5:.2f}L"
+        return f"{value/1e5:.1f}L"
     else:
         return f"{value:.0f}"
 
@@ -183,8 +183,8 @@ async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
         
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\n"
-            message += f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
-            message += "-" * 49 + "\n"
+            message += f"{'TYPE':8}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
+            message += "-" * 50 + "\n"
             
             s_bull_lots, s_bear_lots = 0, 0
             s_bull_turnover, s_bear_turnover = 0, 0
@@ -206,9 +206,9 @@ async def process_2min_summary(context: ContextTypes.DEFAULT_TYPE):
                 tot_str = f"{tot_l}({format_money(tot_t)})"
                 
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                message += f"{display_act[:10]:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
+                message += f"{display_act[:8]:8}{itm_str:>14}{otm_str:>14}{tot_str:>14}\n"
             
-            message += "-" * 49 + "\n"
+            message += "-" * 50 + "\n"
             opt_net = s_bull_lots - s_bear_lots
             message += f"Option Bias: {get_bias_label(opt_net)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
@@ -278,8 +278,8 @@ async def process_5min_summary(context: ContextTypes.DEFAULT_TYPE):
         
         if symbol in opt_data:
             message += "--- OPTIONS FLOW ---\n"
-            message += f"{'TYPE':10}{'ITM':>13}{'OTM':>13}{'TOT':>13}\n"
-            message += "-" * 49 + "\n"
+            message += f"{'TYPE':8}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
+            message += "-" * 50 + "\n"
             
             s_bull_lots, s_bear_lots = 0, 0
             s_bull_turnover, s_bear_turnover = 0, 0
@@ -301,9 +301,9 @@ async def process_5min_summary(context: ContextTypes.DEFAULT_TYPE):
                 tot_str = f"{tot_l}({format_money(tot_t)})"
                 
                 display_act = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR").replace("SHORT_COVERING","SC").replace("LONG_UNWINDING","UNW")
-                message += f"{display_act[:10]:10}{itm_str:>13}{otm_str:>13}{tot_str:>13}\n"
+                message += f"{display_act[:8]:8}{itm_str:>14}{otm_str:>14}{tot_str:>14}\n"
             
-            message += "-" * 49 + "\n"
+            message += "-" * 50 + "\n"
             opt_net = s_bull_lots - s_bear_lots
             message += f"Option Bias: {get_bias_label(opt_net)}\n"
             message += f"Bullish Turn: {format_money(s_bull_turnover)}\n"
