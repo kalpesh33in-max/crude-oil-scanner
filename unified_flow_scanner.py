@@ -7,7 +7,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 
-# ================== ENV ==================
+# ================= ENV =================
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
 BOT_TOKEN_2 = os.getenv("SUMMARIZER_BOT_TOKEN_2")
 
@@ -17,7 +17,7 @@ SUMMARY_5MIN_CHAT_ID = os.getenv("SUMMARY_5MIN_CHAT_ID")
 
 bot2 = Bot(token=BOT_TOKEN_2) if BOT_TOKEN_2 else None
 
-# ================== BUFFERS ==================
+# ================= DATA =================
 buffer_2min = []
 buffer_5min = []
 
@@ -31,7 +31,7 @@ LOT_SIZES = {
     "SBIN": 750
 }
 
-# ================== UTILS ==================
+# ================= UTILS =================
 def format_money(v):
     if v >= 1e7: return f"{v/1e7:.2f}Cr"
     elif v >= 1e5: return f"{v/1e5:.2f}L"
@@ -49,7 +49,21 @@ def bias_label(x):
     if x < 0: return "🔴 Mild Bearish"
     return "⚖ Neutral"
 
-# ================== PARSER ==================
+# ================= STRIKE =================
+def classify_strike(symbol_full, fut_price):
+    m = re.search(r"(\d+)(CE|PE)", symbol_full)
+    if not m or not fut_price:
+        return None
+
+    strike = float(m.group(1))
+    typ = m.group(2)
+
+    if typ == "CE":
+        return "ITM" if strike < fut_price else "OTM"
+    else:
+        return "ITM" if strike > fut_price else "OTM"
+
+# ================= PARSER =================
 def parse_alert(text):
     text = text.upper()
 
@@ -71,10 +85,11 @@ def parse_alert(text):
         return None
 
     is_future = "FUT" in symbol_full
-
     option_type = "CE" if "CE" in symbol_full else ("PE" if "PE" in symbol_full else None)
 
-    # ================= ACTION =================
+    zone = classify_strike(symbol_full, fut_price)
+
+    # ACTION LOGIC
     if "WRITER" in text:
         act = "CALL_WRITER" if option_type == "CE" else "PUT_WRITER"
 
@@ -104,10 +119,11 @@ def parse_alert(text):
         "lots": lots,
         "price": price,
         "future": fut_price,
-        "action": act
+        "action": act,
+        "zone": zone
     }
 
-# ================== HANDLER ==================
+# ================= HANDLER =================
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
 
@@ -117,16 +133,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buffer_2min.append(data)
             buffer_5min.append(data)
 
-# ================== SUMMARY ==================
+# ================= SUMMARY =================
 def build_summary(batch, mode):
-    opt = defaultdict(lambda: defaultdict(int))
-    opt_turn = defaultdict(lambda: defaultdict(float))
+    opt = defaultdict(lambda: defaultdict(lambda: {"ITM":0,"OTM":0}))
+    opt_turn = defaultdict(lambda: defaultdict(lambda: {"ITM":0.0,"OTM":0.0}))
     fut = defaultdict(lambda: defaultdict(int))
     fut_turn = defaultdict(lambda: defaultdict(float))
     last_price = {}
 
     for a in batch:
-        s, act, lots, price = a["symbol"], a["action"], a["lots"], a["price"]
+        s, act, lots, price, zone = a["symbol"], a["action"], a["lots"], a["price"], a["zone"]
 
         if a["future"]:
             last_price[s] = a["future"]
@@ -135,13 +151,14 @@ def build_summary(batch, mode):
             fut[s][act] += lots
             fut_turn[s][act] += lots * 175000
         else:
-            opt[s][act] += lots
+            if zone:
+                opt[s][act][zone] += lots
 
-            if mode == "2min" and ("WRITER" in act or "_SC" in act):
-                opt_turn[s][act] += lots * 125000
-            else:
-                if price:
-                    opt_turn[s][act] += lots * price * LOT_SIZES[s]
+                if mode == "2min" and ("WRITER" in act or "_SC" in act):
+                    opt_turn[s][act][zone] += lots * 125000
+                else:
+                    if price:
+                        opt_turn[s][act][zone] += lots * price * LOT_SIZES[s]
 
     title = "2 MIN" if mode=="2min" else "5 MIN"
     msg = f"<pre>\n📊 {title} INSTITUTIONAL FLOW REPORT\n\n"
@@ -155,26 +172,32 @@ def build_summary(batch, mode):
         # OPTIONS
         if s in opt:
             msg += "--- OPTIONS FLOW ---\n"
-            msg += f"{'TYPE':10}{'TOTAL':>20}\n"
-            msg += "-"*35 + "\n"
+            msg += f"{'TYPE':8}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
+            msg += "-"*50 + "\n"
 
-            bull = bear = 0
-            bull_t = bear_t = 0
+            bull=bear=0
+            bull_t=bear_t=0
 
             for act in opt[s]:
-                l = opt[s][act]
-                t = opt_turn[s][act]
+                itm_l = opt[s][act]["ITM"]
+                otm_l = opt[s][act]["OTM"]
+
+                itm_t = opt_turn[s][act]["ITM"]
+                otm_t = opt_turn[s][act]["OTM"]
+
+                tot_l = itm_l + otm_l
+                tot_t = itm_t + otm_t
 
                 name = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR")
 
-                msg += f"{name:10}{l} ({format_money(t)})\n"
+                msg += f"{name[:8]:8}{f'{itm_l}({format_money(itm_t)})':>14}{f'{otm_l}({format_money(otm_t)})':>14}{f'{tot_l}({format_money(tot_t)})':>14}\n"
 
                 if act in ["PUT_WRITER","CALL_BUY","PUT_SC","CALL_UNW"]:
-                    bull += l; bull_t += t
+                    bull += tot_l; bull_t += tot_t
                 else:
-                    bear += l; bear_t += t
+                    bear += tot_l; bear_t += tot_t
 
-            msg += "-"*35 + "\n"
+            msg += "-"*50 + "\n"
             msg += f"Option Bias: {bias_label(bull-bear)}\n"
             msg += f"Bullish Turn: {format_money(bull_t)}\n"
             msg += f"Bearish Turn: {format_money(bear_t)}\n\n"
@@ -183,8 +206,8 @@ def build_summary(batch, mode):
         if s in fut:
             msg += "---- FUTURES FLOW ----\n"
 
-            f_bull = f_bear = 0
-            f_bt = f_bt2 = 0
+            f_bull=f_bear=0
+            f_bt=f_bt2=0
 
             for act in fut[s]:
                 l = fut[s][act]
@@ -203,12 +226,12 @@ def build_summary(batch, mode):
             msg += f"Bullish Turn: {format_money(f_bt)}\n"
             msg += f"Bearish Turn: {format_money(f_bt2)}\n"
 
-        msg += "\n====================================\n\n"
+        msg += "\n========================================\n\n"
 
     msg += f"Validity: Next {title}\n</pre>"
     return msg
 
-# ================== JOBS ==================
+# ================= JOBS =================
 async def process_2min(context):
     global buffer_2min
     if not buffer_2min: return
@@ -231,7 +254,7 @@ async def process_5min(context):
     target = bot2 if bot2 else context.bot
     await target.send_message(chat_id=SUMMARY_5MIN_CHAT_ID,text=msg,parse_mode="HTML")
 
-# ================== MAIN ==================
+# ================= MAIN =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
