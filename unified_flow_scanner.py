@@ -50,24 +50,23 @@ def bias_label(x):
     return "⚖ Neutral"
 
 # ================= STRIKE =================
-def classify_strike(symbol_full, fut_price):
-    m = re.search(r"(\d+)(CE|PE)", symbol_full)
-    if not m or not fut_price:
-        return None
-
-    strike = float(m.group(1))
-    typ = m.group(2)
-
-    if typ == "CE":
-        return "ITM" if strike < fut_price else "OTM"
-    else:
-        return "ITM" if strike > fut_price else "OTM"
+def classify_strike(strike, option_type, future_price):
+    try:
+        strike = float(strike)
+        future_price = float(future_price)
+        if option_type == "CE":
+            return "ITM" if strike < future_price else "OTM"
+        elif option_type == "PE":
+            return "ITM" if strike > future_price else "OTM"
+    except: pass
+    return None
 
 # ================= PARSER =================
 def parse_alert(text):
     text = text.upper()
 
-    symbol = re.search(r"SYMBOL:\s*([\w:-]+)", text)
+    # Improved symbol regex to capture symbols with spaces
+    symbol = re.search(r"SYMBOL:\s*([^\n\r]+)", text)
     lots = re.search(r"LOTS:\s*(\d+)", text)
     price = re.search(r"PRICE:\s*([\d.]+)", text)
     fut = re.search(r"FUTURE PRICE:\s*([\d.]+)", text)
@@ -75,7 +74,7 @@ def parse_alert(text):
     if not symbol or not lots:
         return None
 
-    symbol_full = symbol.group(1)
+    symbol_full = symbol.group(1).strip()
     lots = int(lots.group(1))
     price = float(price.group(1)) if price else None
     fut_price = float(fut.group(1)) if fut else None
@@ -84,10 +83,17 @@ def parse_alert(text):
     if not base:
         return None
 
-    is_future = "FUT" in symbol_full
-    option_type = "CE" if "CE" in symbol_full else ("PE" if "PE" in symbol_full else None)
+    # Robust Option Match
+    opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
+    zone = None
+    option_type = None
 
-    zone = classify_strike(symbol_full, fut_price)
+    if opt_match and fut_price:
+        strike = opt_match.group(1)
+        option_type = opt_match.group(2)
+        zone = classify_strike(strike, option_type, fut_price)
+
+    is_future = (opt_match is None)
 
     # ACTION LOGIC
     if "WRITER" in text:
@@ -108,7 +114,7 @@ def parse_alert(text):
     elif "FUTURE BUY" in text or "BUY (LONG)" in text:
         act = "FUTURE_BUY"
 
-    elif "FUTURE SELL" in text:
+    elif "FUTURE SELL" in text or "SELL (SHORT)" in text:
         act = "FUTURE_SELL"
 
     else:
