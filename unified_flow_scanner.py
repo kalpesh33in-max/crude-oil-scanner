@@ -245,10 +245,17 @@ def build_summary(batch, mode):
 # ================= JOBS =================
 async def process_2min(context):
     global buffer_2min
+    now = datetime.now(IST)
+    
+    # MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
+    current_time_int = now.hour * 100 + now.minute
+    if current_time_int < 915 or current_time_int > 1530:
+        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping 2 MIN report.")
+        return
+
     if not buffer_2min: return
 
     # Filter data for the last 2 minutes based on IST
-    now = datetime.now(IST)
     batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
     buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
 
@@ -259,10 +266,17 @@ async def process_2min(context):
 
 async def process_5min(context):
     global buffer_5min
+    now = datetime.now(IST)
+
+    # MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
+    current_time_int = now.hour * 100 + now.minute
+    if current_time_int < 915 or current_time_int > 1530:
+        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping 5 MIN report.")
+        return
+
     if not buffer_5min: return
 
     # Filter data for the last 5 minutes based on IST
-    now = datetime.now(IST)
     batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
     buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
 
