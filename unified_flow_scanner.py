@@ -1,11 +1,15 @@
 import os
 import re
 import logging
+import pytz
+from datetime import datetime
 from collections import defaultdict
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
+
+IST = pytz.timezone('Asia/Kolkata')
 
 # ================= ENV =================
 BOT_TOKEN = os.getenv("SUMMARIZER_BOT_TOKEN")
@@ -126,7 +130,8 @@ def parse_alert(text):
         "price": price,
         "future": fut_price,
         "action": act,
-        "zone": zone
+        "zone": zone,
+        "timestamp": datetime.now(IST)
     }
 
 # ================= HANDLER =================
@@ -242,8 +247,12 @@ async def process_2min(context):
     global buffer_2min
     if not buffer_2min: return
 
-    batch = buffer_2min.copy()
-    buffer_2min.clear()
+    # Filter data for the last 2 minutes based on IST
+    now = datetime.now(IST)
+    batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
+    buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
+
+    if not batch: return
 
     msg = build_summary(batch,"2min")
     await context.bot.send_message(chat_id=SUMMARY_2MIN_CHAT_ID,text=msg,parse_mode="HTML")
@@ -252,8 +261,12 @@ async def process_5min(context):
     global buffer_5min
     if not buffer_5min: return
 
-    batch = buffer_5min.copy()
-    buffer_5min.clear()
+    # Filter data for the last 5 minutes based on IST
+    now = datetime.now(IST)
+    batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
+    buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
+
+    if not batch: return
 
     msg = build_summary(batch,"5min")
 
