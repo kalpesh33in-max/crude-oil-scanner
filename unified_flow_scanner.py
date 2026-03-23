@@ -203,9 +203,10 @@ def build_summary(batch, mode):
 
                 msg += f"{name[:8]:8}{f'{itm_l}({format_money(itm_t)})':>14}{f'{otm_l}({format_money(otm_t)})':>14}{f'{tot_l}({format_money(tot_t)})':>14}\n"
 
-                if act in ["PUT_WRITER","CALL_BUY","PUT_SC","CALL_UNW"]:
+                # CORRECTED CLASSIFICATION
+                if act in ["PUT_WRITER", "CALL_BUY", "PUT_SC", "CALL_UNW"]:
                     bull += tot_l; bull_t += tot_t
-                else:
+                else: # CALL_WRITER, PUT_BUY, CALL_SC, PUT_UNW
                     bear += tot_l; bear_t += tot_t
 
             msg += "-"*50 + "\n"
