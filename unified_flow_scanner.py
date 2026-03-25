@@ -2,7 +2,7 @@ import os
 import re
 import logging
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta  # Added timedelta here
 from collections import defaultdict
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -28,7 +28,7 @@ buffer_5min = []
 TRACK_SYMBOLS = ["BANKNIFTY","HDFCBANK","ICICIBANK","AXISBANK","SBIN"]
 
 LOT_SIZES = {
-    "BANKNIFTY": 30,
+    "BANKNIFTY": 30, # Corrected to 30 as per your recent update
     "HDFCBANK": 550,
     "ICICIBANK": 700,
     "AXISBANK": 625,
@@ -69,7 +69,6 @@ def classify_strike(strike, option_type, future_price):
 def parse_alert(text):
     text = text.upper()
 
-    # Improved symbol regex to capture symbols with spaces
     symbol = re.search(r"SYMBOL:\s*([^\n\r]+)", text)
     lots = re.search(r"LOTS:\s*(\d+)", text)
     price = re.search(r"PRICE:\s*([\d.]+)", text)
@@ -87,7 +86,6 @@ def parse_alert(text):
     if not base:
         return None
 
-    # Robust Option Match
     opt_match = re.search(r"(\d+)(CE|PE)$", symbol_full)
     zone = None
     option_type = None
@@ -99,28 +97,20 @@ def parse_alert(text):
 
     is_future = (opt_match is None)
 
-    # ACTION LOGIC
     if "WRITER" in text:
         act = "CALL_WRITER" if option_type == "CE" else "PUT_WRITER"
-
     elif "CALL BUY" in text:
         act = "CALL_BUY"
-
     elif "PUT BUY" in text:
         act = "PUT_BUY"
-
     elif "SHORT COVERING" in text:
         act = "FUTURE_SC" if is_future else ("CALL_SC" if option_type=="CE" else "PUT_SC")
-
     elif "LONG UNWINDING" in text:
         act = "FUTURE_UNW" if is_future else ("CALL_UNW" if option_type=="CE" else "PUT_UNW")
-
     elif "FUTURE BUY" in text or "BUY (LONG)" in text:
         act = "FUTURE_BUY"
-
     elif "FUTURE SELL" in text or "SELL (SHORT)" in text:
         act = "FUTURE_SELL"
-
     else:
         return None
 
@@ -137,7 +127,6 @@ def parse_alert(text):
 # ================= HANDLER =================
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post or update.message
-
     if msg and msg.text and str(msg.chat_id) == str(TARGET_CHANNEL_ID):
         data = parse_alert(msg.text)
         if data:
@@ -154,7 +143,6 @@ def build_summary(batch, mode):
 
     for a in batch:
         s, act, lots, price, zone = a["symbol"], a["action"], a["lots"], a["price"], a["zone"]
-
         if a["future"]:
             last_price[s] = a["future"]
 
@@ -164,7 +152,6 @@ def build_summary(batch, mode):
         else:
             if zone:
                 opt[s][act][zone] += lots
-
                 if mode == "2min" and ("WRITER" in act or "_SC" in act):
                     opt_turn[s][act][zone] += lots * 125000
                 else:
@@ -180,7 +167,6 @@ def build_summary(batch, mode):
 
         msg += f"💎 {s} (FUT: {last_price.get(s,'N/A')})\n\n"
 
-        # OPTIONS
         if s in opt:
             msg += "--- OPTIONS FLOW ---\n"
             msg += f"{'TYPE':8}{'ITM':>14}{'OTM':>14}{'TOT':>14}\n"
@@ -192,22 +178,16 @@ def build_summary(batch, mode):
             for act in opt[s]:
                 itm_l = opt[s][act]["ITM"]
                 otm_l = opt[s][act]["OTM"]
-
                 itm_t = opt_turn[s][act]["ITM"]
                 otm_t = opt_turn[s][act]["OTM"]
-
                 tot_l = itm_l + otm_l
                 tot_t = itm_t + otm_t
 
                 name = act.replace("CALL_WRITER","CALL_WR").replace("PUT_WRITER","PUT_WR")
-
                 msg += f"{name[:8]:8}{f'{itm_l}({format_money(itm_t)})':>14}{f'{otm_l}({format_money(otm_t)})':>14}{f'{tot_l}({format_money(tot_t)})':>14}\n"
 
-                # --- PERFECT BIAS LOGIC ---
-                # Bullish Actions: PUT WRITER, CALL BUY, CALL SHORT COVERING, PUT UNWINDING
                 if act in ["PUT_WRITER", "CALL_BUY", "CALL_SC", "PUT_UNW"]:
                     bull += tot_l; bull_t += tot_t
-                # Bearish Actions: CALL WRITER, PUT BUY, PUT SHORT COVERING, CALL UNWINDING
                 elif act in ["CALL_WRITER", "PUT_BUY", "PUT_SC", "CALL_UNW"]:
                     bear += tot_l; bear_t += tot_t
 
@@ -216,21 +196,15 @@ def build_summary(batch, mode):
             msg += f"Bullish Turn: {format_money(bull_t)}\n"
             msg += f"Bearish Turn: {format_money(bear_t)}\n\n"
 
-        # FUTURES
         if s in fut:
             msg += "---- FUTURES FLOW ----\n"
-
             f_bull=f_bear=0
             f_bt=f_bt2=0
-
             for act in fut[s]:
                 l = fut[s][act]
                 t = fut_turn[s][act]
-
                 name = format_future(act)
-
                 msg += f"{name:10} : {l} lots ({format_money(t)})\n"
-
                 if act in ["FUTURE_BUY","FUTURE_SC"]:
                     f_bull += l; f_bt += t
                 else:
@@ -250,17 +224,16 @@ async def process_2min(context):
     global buffer_2min
     now = datetime.now(IST)
     
-    # MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
     current_time_int = now.hour * 100 + now.minute
     if current_time_int < 915 or current_time_int > 1530:
-        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping 2 MIN report.")
         return
 
     if not buffer_2min: return
 
-    # Filter data for the last 1 minute based on IST
-    batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=1)]
-    buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=1)]
+    # Filter for the last 2 minutes
+    batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
+    # Keep only relevant data in buffer
+    buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
 
     if not batch: return
 
@@ -271,33 +244,31 @@ async def process_5min(context):
     global buffer_5min
     now = datetime.now(IST)
 
-    # MARKET HOURS CHECK (9:15 AM to 3:30 PM IST)
     current_time_int = now.hour * 100 + now.minute
     if current_time_int < 915 or current_time_int > 1530:
-        logging.info(f"⏳ Market Closed ({now.strftime('%H:%M')}). Skipping 5 MIN report.")
         return
 
     if not buffer_5min: return
 
-    # Filter data for the last 1 minute based on IST
-    batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=1)]
-    buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=1)]
+    # Filter for the last 5 minutes
+    batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
+    # Keep only relevant data in buffer
+    buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
 
     if not batch: return
 
     msg = build_summary(batch,"5min")
-
     target = bot2 if bot2 else context.bot
     await target.send_message(chat_id=SUMMARY_5MIN_CHAT_ID,text=msg,parse_mode="HTML")
 
 # ================= MAIN =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(MessageHandler(filters.TEXT, handler))
 
-    app.job_queue.run_repeating(process_2min, interval=60, first=10)
-    app.job_queue.run_repeating(process_5min, interval=60, first=20)
+    # Jobs run every 1 and 2 minutes respectively to check buffers
+    app.job_queue.run_repeating(process_2min, interval=120, first=10)
+    app.job_queue.run_repeating(process_5min, interval=300, first=20)
 
     app.run_polling()
 
