@@ -2,7 +2,7 @@ import os
 import re
 import logging
 import pytz
-from datetime import datetime, timedelta  # Added timedelta here
+from datetime import datetime, timedelta  # FIXED: Added timedelta import
 from collections import defaultdict
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
@@ -28,7 +28,7 @@ buffer_5min = []
 TRACK_SYMBOLS = ["BANKNIFTY","HDFCBANK","ICICIBANK","AXISBANK","SBIN"]
 
 LOT_SIZES = {
-    "BANKNIFTY": 30, # Corrected to 30 as per your recent update
+    "BANKNIFTY": 30,
     "HDFCBANK": 550,
     "ICICIBANK": 700,
     "AXISBANK": 625,
@@ -152,6 +152,7 @@ def build_summary(batch, mode):
         else:
             if zone:
                 opt[s][act][zone] += lots
+                # DIFFERENT OUTPUT LOGIC: 2min uses fixed 1.25L for Writing, 5min uses Price*Lots
                 if mode == "2min" and ("WRITER" in act or "_SC" in act):
                     opt_turn[s][act][zone] += lots * 125000
                 else:
@@ -230,10 +231,9 @@ async def process_2min(context):
 
     if not buffer_2min: return
 
-    # Filter for the last 2 minutes
-    batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
-    # Keep only relevant data in buffer
-    buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
+    # Back to original 1 minute logic
+    batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=1)]
+    buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=1)]
 
     if not batch: return
 
@@ -250,10 +250,9 @@ async def process_5min(context):
 
     if not buffer_5min: return
 
-    # Filter for the last 5 minutes
-    batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
-    # Keep only relevant data in buffer
-    buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
+    # Back to original 1 minute logic
+    batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=1)]
+    buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=1)]
 
     if not batch: return
 
@@ -266,9 +265,8 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT, handler))
 
-    # Jobs run every 1 and 2 minutes respectively to check buffers
-    app.job_queue.run_repeating(process_2min, interval=120, first=10)
-    app.job_queue.run_repeating(process_5min, interval=300, first=20)
+    app.job_queue.run_repeating(process_2min, interval=60, first=10)
+    app.job_queue.run_repeating(process_5min, interval=60, first=20)
 
     app.run_polling()
 
