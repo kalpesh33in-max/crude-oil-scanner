@@ -230,7 +230,7 @@ async def process_2min(context):
 
     if not buffer_2min: return
 
-    # Correct window for 2min report
+    # Takes data from the last 2 minutes
     batch = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
     buffer_2min = [a for a in buffer_2min if a["timestamp"] >= now - timedelta(minutes=2)]
 
@@ -249,7 +249,7 @@ async def process_5min(context):
 
     if not buffer_5min: return
 
-    # Correct window for 5min report
+    # Takes data from the last 5 minutes
     batch = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
     buffer_5min = [a for a in buffer_5min if a["timestamp"] >= now - timedelta(minutes=5)]
 
@@ -264,9 +264,9 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT, handler))
 
-    # Synchronized starts: both trigger at the 10-second mark 
+    # Job scheduling: 10s and 20s starts
     app.job_queue.run_repeating(process_2min, interval=60, first=10)
-    app.job_queue.run_repeating(process_5min, interval=60, first=10)
+    app.job_queue.run_repeating(process_5min, interval=60, first=20)
 
     app.run_polling()
 
