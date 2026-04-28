@@ -25,22 +25,22 @@ bot2 = Bot(token=BOT_TOKEN_2) if BOT_TOKEN_2 else None
 buffer_2min = []
 buffer_5min = []
 
-TRACK_SYMBOLS = ["BANKNIFTY","HDFCBANK","ICICIBANK","AXISBANK","SBIN"]
+TRACK_SYMBOLS = ["BANKNIFTY","HDFCBANK","ICICIBANK","NIFTY","SENSEX"]
 
 LOT_SIZES = {
     "BANKNIFTY": 30,
     "HDFCBANK": 550,
     "ICICIBANK": 700,
-    "AXISBANK": 625,
-    "SBIN": 750
+    "NIFTY": 65,
+    "SENSEX": 20
 }
 
 NEAR_ITM_RANGE = {
     "BANKNIFTY": 100,
     "HDFCBANK": 5,
     "ICICIBANK": 10,
-    "AXISBANK": 10,
-    "SBIN": 5
+    "NIFTY": 50,
+    "SENSEX": 100
 }
 
 # ================= UTILS =================
