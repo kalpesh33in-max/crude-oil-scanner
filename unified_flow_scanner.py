@@ -2,12 +2,16 @@ import os
 import re
 import logging
 import pytz
+import json
+import uuid
+import requests
 from datetime import datetime, timedelta  # FIXED: Added timedelta import
 from collections import defaultdict
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -18,6 +22,12 @@ BOT_TOKEN_2 = os.getenv("SUMMARIZER_BOT_TOKEN_2")
 TARGET_CHANNEL_ID = os.getenv("TARGET_CHANNEL_ID")
 SUMMARY_2MIN_CHAT_ID = os.getenv("SUMMARY_2MIN_CHAT_ID")
 SUMMARY_5MIN_CHAT_ID = os.getenv("SUMMARY_5MIN_CHAT_ID")
+
+# Matrix / Element X Credentials
+MATRIX_HOMESERVER = os.getenv("MATRIX_HOMESERVER", "https://matrix.org")
+MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN", "")
+MATRIX_ROOM_ID_2MIN = os.getenv("crude-oil-2min") or os.getenv("MATRIX_ROOM_ID_2MIN", "")
+MATRIX_ROOM_ID_5MIN = os.getenv("crude-oil-5min") or os.getenv("MATRIX_ROOM_ID_5MIN", "")
 
 bot2 = Bot(token=BOT_TOKEN_2) if BOT_TOKEN_2 else None
 
@@ -44,6 +54,33 @@ NEAR_ITM_RANGE = {
 }
 
 # ================= UTILS =================
+async def send_matrix_message(message, room_id):
+    if not (MATRIX_ACCESS_TOKEN and room_id):
+        return
+    try:
+        # Strip HTML tags for Matrix body
+        clean_msg = re.sub(r'<[^>]+>', '', message)
+        txn_id = str(uuid.uuid4())
+        url = f"{MATRIX_HOMESERVER}/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn_id}"
+        headers = {
+            "Authorization": f"Bearer {MATRIX_ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "msgtype": "m.text",
+            "body": clean_msg
+        }
+        # Run in executor since requests is blocking
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(
+            None, 
+            lambda: requests.put(url, headers=headers, data=json.dumps(payload), timeout=10)
+        )
+        if res.status_code != 200:
+            logger.error(f"Matrix Delivery Error: {res.status_code} - {res.text}")
+    except Exception as e:
+        logger.error(f"Matrix Exception: {e}")
+
 def format_money(v):
     if v >= 1e7: return f"{v/1e7:.2f}Cr"
     elif v >= 1e5: return f"{v/1e5:.2f}L"
@@ -251,7 +288,14 @@ async def process_2min(context):
     if not batch: return
 
     msg = build_summary(batch,"2min")
-    await context.bot.send_message(chat_id=SUMMARY_2MIN_CHAT_ID,text=msg,parse_mode="HTML")
+    # Send to Telegram
+    try:
+        await context.bot.send_message(chat_id=SUMMARY_2MIN_CHAT_ID,text=msg,parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Telegram 2min Send Error: {e}")
+
+    # Send to Matrix
+    await send_matrix_message(msg, MATRIX_ROOM_ID_2MIN)
 
 async def process_5min(context):
     global buffer_5min
@@ -270,8 +314,15 @@ async def process_5min(context):
     if not batch: return
 
     msg = build_summary(batch,"5min")
-    target = bot2 if bot2 else context.bot
-    await target.send_message(chat_id=SUMMARY_5MIN_CHAT_ID,text=msg,parse_mode="HTML")
+    # Send to Telegram
+    try:
+        target = bot2 if bot2 else context.bot
+        await target.send_message(chat_id=SUMMARY_5MIN_CHAT_ID,text=msg,parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Telegram 5min Send Error: {e}")
+
+    # Send to Matrix
+    await send_matrix_message(msg, MATRIX_ROOM_ID_5MIN)
 
 # ================= MAIN =================
 def main():
